@@ -16,6 +16,7 @@ sys.path.insert(0, current_dir)
 
 from config import config
 from langgraph_agent import scid5_agent, InterviewState
+from factory import create_agent
 
 # 页面配置
 st.set_page_config(
@@ -42,18 +43,22 @@ st.markdown("""
         border-radius: 10px;
         margin: 1rem 0;
         max-width: 80%;
+        background: #fff3e0;
+        color: #000000;
     }
     
     .user-message {
-        background: #f0f2f6;
+        background: #fff3e0;
         margin-left: auto;
         border-left: 4px solid #667eea;
+        color: #000000;
     }
     
     .ai-message {
-        background: #e8f4f8;
+        background: #fff3e0;
         margin-right: auto;
         border-left: 4px solid #764ba2;
+        color: #000000;
     }
     
     .emergency-alert {
@@ -77,6 +82,19 @@ st.markdown("""
         border-radius: 10px;
         padding: 1rem;
         margin: 1rem 0;
+        color: #000000;
+    }
+    
+    .disclaimer h4 {
+        color: #000000;
+    }
+    
+    .disclaimer ul {
+        color: #000000;
+    }
+    
+    .disclaimer li {
+        color: #000000;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -94,6 +112,12 @@ def initialize_session_state():
     
     if "assessment_complete" not in st.session_state:
         st.session_state.assessment_complete = False
+    
+    if "workflow_mode" not in st.session_state:
+        st.session_state.workflow_mode = "adaptive"
+    
+    if "agent_instance" not in st.session_state:
+        st.session_state.agent_instance = None
 
 def display_header():
     """显示页面头部"""
@@ -110,7 +134,7 @@ def display_disclaimer():
     <div class="disclaimer">
         <h4>⚠️ 重要声明</h4>
         <ul>
-            <li>本工具可进行心理健康筛查和CBT疗愈对话</li>
+            <li>本工具可进行心理健康筛查和CBT疗愈对话，支持智能检测和固定流程两种工作模式</li>
             <li>本工具仅目的用于心理健康筛查，不能替代专业医疗诊断</li>
             <li>如有严重症状或紧急情况，请立即寻求专业医疗帮助</li>
             <li>评估结果仅供参考，最终诊断需由专业医疗人员确定</li>
@@ -178,9 +202,16 @@ def process_user_input(user_input: str):
         # 更新会话状态
         st.session_state.messages.append({"role": "user", "content": user_input})
         
-        # 使用 LangGraph Agent 处理用户输入（同步版本）
+        # 根据选择的模式创建或获取agent实例
+        if st.session_state.agent_instance is None:
+            print(f"🔍 DEBUG: 创建新的agent实例，模式: {st.session_state.workflow_mode}")
+            st.session_state.agent_instance = create_agent(st.session_state.workflow_mode)
+        
+        current_agent = st.session_state.agent_instance
+        
+        # 使用选定的 Agent 处理用户输入（同步版本）
         try:
-            ai_response, updated_state = scid5_agent.process_message_sync(
+            ai_response, updated_state = current_agent.process_message_sync(
                 user_input, st.session_state.interview_state
             )
             
@@ -240,6 +271,38 @@ def display_sidebar():
     """显示侧边栏"""
     with st.sidebar:
         st.header("📋 评估信息")
+        
+        # 工作流程模式选择
+        st.markdown("### 🎯 工作流程模式")
+        workflow_options = {
+            "adaptive": "🤖 智能检测模式",
+            "structured": "📋 固定流程模式"
+        }
+        
+        selected_mode = st.selectbox(
+            "选择工作流程模式:",
+            options=list(workflow_options.keys()),
+            format_func=lambda x: workflow_options[x],
+            index=0 if st.session_state.workflow_mode == "adaptive" else 1,
+            key="workflow_selector",
+            help="选择对话策略模式"
+        )
+        
+        # 显示模式说明
+        if selected_mode == "adaptive":
+            st.info("🤖 **智能检测模式**: 根据用户意图自由切换问诊和闲聊")
+        else:
+            st.info("📋 **固定流程模式**: 先完成问诊再转CBT闲聊")
+        
+        # 检查是否需要重新创建agent
+        if selected_mode != st.session_state.workflow_mode:
+            st.session_state.workflow_mode = selected_mode
+            st.session_state.agent_instance = None  # 重置agent实例
+            # 如果已经开始对话，提示用户重新开始
+            if st.session_state.interview_started:
+                st.warning("⚠️ 模式已更改，建议重新开始评估以应用新模式")
+        
+        st.markdown("---")
         
         # 配置状态
         try:
@@ -352,6 +415,15 @@ def display_sidebar():
                 if cbt_active:
                     st.success("🌟 CBT疗愈师已激活")
                 
+                # 显示当前工作流程模式
+                st.markdown("#### ⚙️ 当前工作流程模式")
+                current_mode = st.session_state.get("workflow_mode", "adaptive")
+                mode_display = {
+                    "adaptive": "🤖 智能检测模式",
+                    "structured": "📋 固定流程模式"
+                }
+                st.write(f"**当前模式**: {mode_display.get(current_mode, current_mode)}")
+                
                 # 显示模式检测结果
                 detection_result = st.session_state.interview_state.get("mode_detection_result", {})
                 if detection_result:
@@ -420,7 +492,11 @@ def display_sidebar():
         
         # 操作按钮
         if st.button("🔄 重新开始评估"):
+            # 保存当前选择的workflow_mode
+            current_mode = st.session_state.get("workflow_mode", "adaptive")
             st.session_state.clear()
+            st.session_state.workflow_mode = current_mode
+            initialize_session_state()
             st.rerun()
         
         if st.button("📊 下载评估报告"):

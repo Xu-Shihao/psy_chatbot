@@ -7,17 +7,50 @@ import json
 from langchain.schema import HumanMessage, SystemMessage
 
 from agent_types import InterviewState
+from enhanced_intent_detection import EnhancedIntentDetector
 
 
 class ConversationModeHandler:
-    """对话模式处理器"""
+    """对话模式处理器 - 集成增强意图检测"""
     
     def __init__(self, llm, workflow_mode: str = "adaptive"):
         self.llm = llm
         self.workflow_mode = workflow_mode
+        
+        # 初始化增强意图检测器
+        self.intent_detector = EnhancedIntentDetector(llm, workflow_mode)
+        
+        # 保留原有的简单检测作为后备
+        self.simple_detection_enabled = True
     
     def detect_conversation_mode(self, state: InterviewState) -> InterviewState:
-        """检测对话模式 - 在前5轮检测用户意图，一旦进入问诊模式就锁定"""
+        """检测对话模式 - 使用增强检测器"""
+        try:
+            # 使用增强的意图检测
+            result = self.intent_detector.detect_conversation_mode(state)
+            
+            # 添加调试信息
+            if result.get("mode_detection_result"):
+                print("🔍 增强意图检测结果：")
+                print(f"  模式: {result['conversation_mode']}")
+                print(f"  置信度: {result['mode_detection_result'].get('confidence', 'N/A')}")
+                print(f"  原因: {result['mode_detection_result'].get('reason', 'N/A')}")
+            
+            return result
+                
+        except Exception as e:
+            print(f"⚠️ 增强检测失败，使用简单检测: {e}")
+            
+            # 后备：使用原有的简单检测逻辑
+            if self.simple_detection_enabled:
+                return self._simple_detection_fallback(state)
+            else:
+                raise e
+    
+    def _simple_detection_fallback(self, state: InterviewState) -> InterviewState:
+        """简单检测后备逻辑（原有逻辑的简化版）"""
+        print("🔄 使用简单检测后备逻辑")
+        
         # 如果已经完成评估，默认进入闲聊模式
         if state.get("assessment_complete", False):
             return {
@@ -57,7 +90,7 @@ class ConversationModeHandler:
                 "conversation_mode": "continue_interview",
                 "chat_therapist_active": False,
                 "conversation_turn_count": current_turn + 1,
-                "interview_mode_locked": True,  # 结构化模式直接锁定问诊
+                "interview_mode_locked": True,
                 "mode_detection_result": {
                     "detected_mode": "continue_interview",
                     "confidence": 1.0,
@@ -81,128 +114,32 @@ class ConversationModeHandler:
         
         latest_user_message = user_messages[-1].content
         
-        # 如果超过5轮且未进入问诊模式，自动锁定为问诊模式
-        if current_turn >= 5 and state.get("conversation_mode", "idle") != "interview":
-            return {
-                **state,
-                "conversation_mode": "interview",
-                "chat_therapist_active": False,
-                "conversation_turn_count": current_turn + 1,
-                "interview_mode_locked": True,
-                "mode_detection_result": {
-                    "detected_mode": "interview",
-                    "confidence": 1.0,
-                    "reason": "已达5轮对话，自动锁定为问诊模式"
-                }
-            }
+        # 简单关键词检测
+        chat_keywords = ["闲聊", "聊天", "谈心", "聊聊", "随便聊", "陪我聊"]
+        interview_keywords = ["抑郁", "焦虑", "失眠", "情绪", "心理", "症状", "困扰", "问题"]
         
-        # 前5轮进行智能意图检测
-        if current_turn < 5:
-            # 使用LLM进行模式检测
-            detection_prompt = f"""
-            请分析用户的输入，判断用户是想要进行心理健康问诊还是想要闲聊：
-
-            用户输入："{latest_user_message}"
-            当前是第{current_turn + 1}轮对话
-
-            判断标准：
-            1. 如果用户明确表达想要闲聊、聊天、谈心等，则为"chat"模式
-            2. 如果用户提到了具体的精神健康症状、心理问题、情绪困扰等，则为"interview"模式
-            3. 如果用户正在回答问诊问题，则为"continue_interview"模式
-            4. 如果用户说"开始评估"或类似的表达，则为"interview"模式
-
-            请以JSON格式回复：
-            {{
-                "mode": "chat/interview/continue_interview",
-                "confidence": 0.0-1.0,
-                "reason": "判断理由",
-                "key_indicators": ["关键指标1", "关键指标2"]
-            }}
-            """
-            
-            try:
-                print("=" * 50)
-                print("🔍 DEBUG - DETECT_CONVERSATION_MODE LLM CALL")
-                print("PROMPT:")
-                print(detection_prompt)
-                print("=" * 50)
-                
-                detection_response = self.llm.invoke([
-                    SystemMessage(content="你是一个专业的心理健康对话分析师，能够准确判断用户的对话意图。"),
-                    HumanMessage(content=detection_prompt)
-                ])
-                
-                print("RESPONSE:")
-                print(detection_response.content)
-                print("=" * 50)
-                
-                detection_result = json.loads(detection_response.content)
-                detected_mode = detection_result["mode"]
-                
-                # 如果检测到问诊模式，立即锁定
-                interview_will_lock = detected_mode in ["interview", "continue_interview"]
-                
-                # 根据当前状态调整检测结果
-                current_mode = state.get("conversation_mode", "idle")
-                if current_mode == "interview" and detected_mode == "interview":
-                    detected_mode = "continue_interview"
-                
-                return {
-                    **state,
-                    "conversation_mode": detected_mode,
-                    "chat_therapist_active": detected_mode == "chat",
-                    "conversation_turn_count": current_turn + 1,
-                    "interview_mode_locked": interview_will_lock,
-                    "mode_detection_result": {
-                        **detection_result,
-                        "turn_count": current_turn + 1,
-                        "locked": interview_will_lock
-                    }
-                }
-                
-            except Exception as e:
-                print(f"模式检测失败: {e}")
-                # 后备逻辑：简单关键词检测
-                chat_keywords = ["闲聊", "聊天", "谈心", "聊聊", "随便聊", "陪我聊"]
-                interview_keywords = ["抑郁", "焦虑", "失眠", "情绪", "心理", "症状", "困扰", "问题"]
-                
-                if any(keyword in latest_user_message for keyword in chat_keywords):
-                    mode = "chat"
-                    will_lock = False
-                elif any(keyword in latest_user_message for keyword in interview_keywords):
-                    mode = "interview"
-                    will_lock = True
-                else:
-                    mode = "continue_interview" if state.get("conversation_mode") == "interview" else "interview"
-                    will_lock = True
-                
-                return {
-                    **state,
-                    "conversation_mode": mode,
-                    "chat_therapist_active": mode == "chat",
-                    "conversation_turn_count": current_turn + 1,
-                    "interview_mode_locked": will_lock,
-                    "mode_detection_result": {
-                        "detected_mode": mode,
-                        "confidence": 0.6,
-                        "reason": "使用关键词检测后备逻辑",
-                        "key_indicators": [],
-                        "turn_count": current_turn + 1,
-                        "locked": will_lock
-                    }
-                }
+        if any(keyword in latest_user_message for keyword in chat_keywords):
+            mode = "chat"
+            will_lock = False
+        elif any(keyword in latest_user_message for keyword in interview_keywords):
+            mode = "interview"
+            will_lock = True
+        else:
+            # 默认继续问诊
+            mode = "continue_interview" if state.get("conversation_mode") == "interview" else "interview"
+            will_lock = True
         
-        # 超过5轮的情况（理论上不应该到达这里，因为上面已经处理了）
         return {
             **state,
-            "conversation_mode": "interview",
-            "chat_therapist_active": False,
+            "conversation_mode": mode,
+            "chat_therapist_active": mode == "chat",
             "conversation_turn_count": current_turn + 1,
-            "interview_mode_locked": True,
+            "interview_mode_locked": will_lock,
             "mode_detection_result": {
-                "detected_mode": "interview",
-                "confidence": 1.0,
-                "reason": "超过5轮对话，强制锁定为问诊模式"
+                "detected_mode": mode,
+                "confidence": 0.7,
+                "reason": "简单关键词检测后备逻辑",
+                "fallback_used": True
             }
         }
     
