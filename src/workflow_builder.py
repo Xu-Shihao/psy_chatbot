@@ -40,7 +40,6 @@ class WorkflowBuilder:
             {
                 "interview": "understand_and_respond",  # 直接进入理解和回应阶段
                 "chat": "chat_therapist_response",
-                "continue_interview": "understand_and_respond",
                 "assessment_complete": "chat_therapist_response"
             }
         )
@@ -74,6 +73,7 @@ class WorkflowBuilder:
         # 如果是结构化模式且未完成评估，强制进入问诊流程
         if (self.agent.workflow_mode == "structured" and 
             not state.get("assessment_complete", False)):
+            print(f"🔒 工作流强制路由到问诊模式 - 结构化模式未完成评估")
             return "interview"
         
         # 智能检测模式的原有逻辑
@@ -81,12 +81,10 @@ class WorkflowBuilder:
         
         if mode == "chat":
             return "chat"
-        elif mode == "interview":
-            return "interview"
-        elif mode == "continue_interview":
-            return "continue_interview"
+        elif mode in ["interview", "continue_interview"]:
+            return "interview"  # 统一映射到interview流程
         elif mode == "assessment_complete":
-            return "assessment_complete"
+            return "assessment_complete"  
         else:
             return "interview"  # 默认进入问诊模式
     
