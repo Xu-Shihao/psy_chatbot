@@ -197,14 +197,14 @@ def process_user_input(user_input: str):
     """处理用户输入 - 使用LangGraph Agent"""
     try:
         # DEBUG: 打印用户输入
-        print(f"🔍 DEBUG: 用户输入 = {user_input}")
+        print(f"🔍 DEBUG: 用户输入 = {user_input}", flush=True)
         
         # 更新会话状态
         st.session_state.messages.append({"role": "user", "content": user_input})
         
         # 根据选择的模式创建或获取agent实例
         if st.session_state.agent_instance is None:
-            print(f"🔍 DEBUG: 创建新的agent实例，模式: {st.session_state.workflow_mode}")
+            print(f"🔍 DEBUG: 创建新的agent实例，模式: {st.session_state.workflow_mode}", flush=True)
             st.session_state.agent_instance = create_agent(st.session_state.workflow_mode)
         
         current_agent = st.session_state.agent_instance
@@ -221,7 +221,7 @@ def process_user_input(user_input: str):
             # 检查是否有final_response字段（CBT疗愈师响应）
             if updated_state.get("final_response"):
                 ai_response = updated_state["final_response"]
-                print(f"🔍 DEBUG: 使用CBT疗愈师响应 = {ai_response}")
+                print(f"🔍 DEBUG: 使用CBT疗愈师响应 = {ai_response}", flush=True)
             
             # 检查是否评估完成
             if updated_state.get("assessment_complete", False):
@@ -231,10 +231,10 @@ def process_user_input(user_input: str):
             if updated_state.get("emergency_situation", False):
                 display_emergency_alert()
             
-            print(f"🔍 DEBUG: AI回复 = {ai_response}")
+            print(f"🔍 DEBUG: AI回复 = {ai_response}", flush=True)
             
         except Exception as llm_error:
-            print(f"❌ DEBUG: LLM调用失败: {llm_error}")
+            print(f"❌ DEBUG: LLM调用失败: {llm_error}", flush=True)
             # 如果LLM调用失败，使用备用回复
             ai_response = f"抱歉，AI服务暂时不可用。错误信息：{str(llm_error)}"
             
@@ -259,11 +259,11 @@ def process_user_input(user_input: str):
         
     except Exception as e:
         error_msg = f"处理消息时出错: {str(e)}"
-        print(f"❌ DEBUG: {error_msg}")
+        print(f"❌ DEBUG: {error_msg}", flush=True)
         st.error(error_msg)
         import traceback
         traceback_str = traceback.format_exc()
-        print(f"❌ DEBUG: 详细错误:\n{traceback_str}")
+        print(f"❌ DEBUG: 详细错误:\n{traceback_str}", flush=True)
         st.error(f"详细错误: {traceback_str}")
         return "抱歉，处理您的消息时出现了错误。请重试。"
 

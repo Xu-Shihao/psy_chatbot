@@ -219,11 +219,11 @@ class SCID5Knowledge:
     
     def get_next_question(self, current_question_id: str, response: str) -> Optional[Question]:
         """根据当前问题和回答获取下一个问题"""
-        print(f"🔍 DEBUG - GET_NEXT_QUESTION: current_question_id={current_question_id}, response={response}")
+        print(f"🔍 DEBUG - GET_NEXT_QUESTION: current_question_id={current_question_id}, response={response}", flush=True)
         
         current_question = self.questions.get(current_question_id)
         if not current_question:
-            print(f"🔍 DEBUG - 未找到问题: {current_question_id}")
+            print(f"🔍 DEBUG - 未找到问题: {current_question_id}", flush=True)
             return None
         
         # 记录评估路径
@@ -256,31 +256,31 @@ class SCID5Knowledge:
         
         # 获取下一个问题ID
         next_question_id = current_question.follow_up_conditions.get(response_key)
-        print(f"🔍 DEBUG - response_key={response_key}, initial_next_question_id={next_question_id}")
-        print(f"🔍 DEBUG - follow_up_conditions={current_question.follow_up_conditions}")
+        print(f"🔍 DEBUG - response_key={response_key}, initial_next_question_id={next_question_id}", flush=True)
+        print(f"🔍 DEBUG - follow_up_conditions={current_question.follow_up_conditions}", flush=True)
         
         # 如果没有找到对应的后续问题，尝试使用默认路径
         if not next_question_id:
-            print(f"🔍 DEBUG - 未找到对应的后续问题，尝试默认路径")
+            print(f"🔍 DEBUG - 未找到对应的后续问题，尝试默认路径", flush=True)
             # 为depression_screening等问题提供默认路径
             if current_question_id == "depression_screening":
                 next_question_id = current_question.follow_up_conditions.get("yes")  # 默认继续抑郁症评估
-                print(f"🔍 DEBUG - depression_screening默认路径: {next_question_id}")
+                print(f"🔍 DEBUG - depression_screening默认路径: {next_question_id}", flush=True)
             else:
                 # 其他情况下，尝试获取第一个可用的后续问题
                 available_keys = list(current_question.follow_up_conditions.keys())
                 if available_keys:
                     next_question_id = current_question.follow_up_conditions[available_keys[0]]
-                    print(f"🔍 DEBUG - 使用第一个可用路径: {next_question_id}")
+                    print(f"🔍 DEBUG - 使用第一个可用路径: {next_question_id}", flush=True)
         
-        print(f"🔍 DEBUG - final_next_question_id={next_question_id}")
+        print(f"🔍 DEBUG - final_next_question_id={next_question_id}", flush=True)
         
         if next_question_id == "assessment_complete":
-            print(f"🔍 DEBUG - 评估完成")
+            print(f"🔍 DEBUG - 评估完成", flush=True)
             return None
         
         next_question = self.questions.get(next_question_id)
-        print(f"🔍 DEBUG - next_question={next_question.id if next_question else None}")
+        print(f"🔍 DEBUG - next_question={next_question.id if next_question else None}", flush=True)
         return next_question
     
     def generate_assessment_summary(self) -> str:

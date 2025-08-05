@@ -7,9 +7,10 @@ import json
 from typing import Tuple
 from langchain.schema import HumanMessage, SystemMessage, AIMessage
 
-from agent_types import InterviewState
+from agent import InterviewState
 from scid5_knowledge import scid5_kb
 from config import config
+from prompts import PromptTemplates
 
 
 class ResponseGenerator:
@@ -23,72 +24,30 @@ class ResponseGenerator:
         assessment_summary = scid5_kb.generate_assessment_summary()
         
         # 使用LLM生成更详细和个性化的总结
-        prompt = f"""基于以下完整的心理健康筛查对话，生成一份专业、个性化的评估总结：
-
-对话历史：
-{chr(10).join(state["conversation_history"])}
-
-用户回答记录：
-{json.dumps(state["user_responses"], ensure_ascii=False, indent=2)}
-
-结构化评估总结：
-{assessment_summary}
-
-请生成一份包含以下内容的个性化总结：
-
-## 🔍 评估总结
-
-### 主要发现
-- 基于对话内容总结用户的主要困扰和症状表现
-- 识别的情感模式和行为特征
-
-### 风险评估
-- 当前的心理健康风险等级
-- 需要特别关注的方面
-
-### 💡 建议和后续步骤
-- 具体的下一步行动建议
-- 可能有帮助的资源和支持
-
-### ⚠️ 重要说明
-- 强调这是筛查工具，不能替代专业诊断
-- 鼓励寻求专业帮助
-
-请保持温暖、支持性的语调，避免使用可能引起焦虑的医学术语。"""
+        prompt = PromptTemplates.get_assessment_summary_prompt(
+            state["conversation_history"], 
+            state["user_responses"], 
+            assessment_summary
+        )
         
-        print("=" * 50)
-        print("🔍 DEBUG - GENERATE_SUMMARY LLM CALL")
-        print("PROMPT:")
-        print(prompt)
-        print("=" * 50)
+        print("=" * 50, flush=True)
+        print("🔍 DEBUG - GENERATE_SUMMARY LLM CALL", flush=True)
+        print("PROMPT:", flush=True)
+        print(prompt, flush=True)
+        print("=" * 50, flush=True)
         
         response = self.llm.invoke([HumanMessage(content=prompt)])
         
-        print("RESPONSE:")
-        print(response.content)
-        print("=" * 50)
+        print("RESPONSE:", flush=True)
+        print(response.content, flush=True)
+        print("=" * 50, flush=True)
         
         detailed_summary = response.content
         
         # 根据工作模式添加不同的结束语
         workflow_mode = getattr(self, 'workflow_mode', 'adaptive')
         if workflow_mode == "structured":
-            detailed_summary += """
-            
----
-
-🌟 **问诊评估已完成！**
-
-现在我们可以进入更轻松的交流环节。如果您有任何想聊的话题，或者需要情绪支持和心理建议，我很乐意以CBT疗愈师的身份继续陪伴您。
-
-您可以：
-- 分享您现在的感受
-- 聊聊日常生活中的事情  
-- 寻求应对困难的建议
-- 或者任何您想谈论的话题
-
-我在这里陪伴您 💕
-"""
+            detailed_summary += PromptTemplates.STRUCTURED_MODE_COMPLETION_MESSAGE
         
         summary_message = AIMessage(content=detailed_summary)
         
@@ -178,17 +137,17 @@ class ResponseGenerator:
 如果需要结束评估，请在回应最后加上"[ASSESSMENT_COMPLETE]"。
 """
             
-            print("=" * 50)
-            print("🔍 DEBUG - GET_NEXT_QUESTION_RESPONSE LLM CALL")
-            print("PROMPT:")
-            print(prompt)
-            print("=" * 50)
+            print("=" * 50, flush=True)
+            print("🔍 DEBUG - GET_NEXT_QUESTION_RESPONSE LLM CALL", flush=True)
+            print("PROMPT:", flush=True)
+            print(prompt, flush=True)
+            print("=" * 50, flush=True)
             
             response = self.llm.invoke([HumanMessage(content=prompt)])
             
-            print("RESPONSE:")
-            print(response.content)
-            print("=" * 50)
+            print("RESPONSE:", flush=True)
+            print(response.content, flush=True)
+            print("=" * 50, flush=True)
             
             ai_response = response.content
             
@@ -293,17 +252,17 @@ class ResponseGenerator:
         请保持温暖、支持性的语调，体现对用户主诉的理解和关注。
 """
             
-            print("=" * 50)
-            print("🔍 DEBUG - GENERATE_ASSESSMENT_SUMMARY LLM CALL")
-            print("PROMPT:")
-            print(prompt)
-            print("=" * 50)
+            print("=" * 50, flush=True)
+            print("🔍 DEBUG - GENERATE_ASSESSMENT_SUMMARY LLM CALL", flush=True)
+            print("PROMPT:", flush=True)
+            print(prompt, flush=True)
+            print("=" * 50, flush=True)
             
             response = self.llm.invoke([HumanMessage(content=prompt)])
             
-            print("RESPONSE:")
-            print(response.content)
-            print("=" * 50)
+            print("RESPONSE:", flush=True)
+            print(response.content, flush=True)
+            print("=" * 50, flush=True)
             
             return response.content
             
@@ -330,28 +289,72 @@ class ResponseGenerator:
     def fallback_response(self, state: dict, user_message: str) -> Tuple[str, dict]:
         """后备响应机制"""
         try:
-            fallback_prompt = f"用户说：{user_message}"
-            system_content = "你是灵溪智伴，一位专业的心理咨询师。"
+            # 更新对话历史 - 添加上一轮AI回复和当前用户消息
+            updated_history = state.get("conversation_history", []).copy()
             
-            print("=" * 50)
-            print("🔍 DEBUG - FALLBACK_RESPONSE LLM CALL")
-            print("SYSTEM PROMPT:")
-            print(system_content)
-            print("USER PROMPT:")
-            print(fallback_prompt)
-            print("=" * 50)
+            # 添加上一轮的AI回复（如果存在且不是初始介绍）
+            messages = state.get("messages", [])
+            
+            print(f"🔍 DEBUG - Messages数量: {len(messages)}", flush=True)
+            for i, msg in enumerate(messages):
+                print(f"🔍 DEBUG - Message[{i}]: {type(msg).__name__}", flush=True)
+            
+            # 只有当有真正的对话历史（超过初始的系统+介绍+用户输入）时，才添加AI回复
+            if len(messages) > 3:  # SystemMessage + AIMessage(intro) + HumanMessage + AIMessage(real_response)
+                last_ai_message = None
+                # 从后往前找，跳过可能的初始介绍
+                for msg in reversed(messages[2:]):  # 跳过前两个消息（SystemMessage + 初始介绍）
+                    if isinstance(msg, AIMessage):
+                        last_ai_message = msg.content.strip()
+                        break
+                if last_ai_message:
+                    updated_history.append(f"You: {last_ai_message}")
+                    print(f"🔍 DEBUG - 添加AI历史: {last_ai_message[:50]}...", flush=True)
+            
+            # 添加当前用户消息
+            updated_history.append(f"User: {user_message}")
+            print(f"🔍 DEBUG - 添加用户消息: {user_message}", flush=True)
+            
+            # 获取最近20轮的历史记录用于prompt
+            recent_history = updated_history[-20:] if len(updated_history) > 0 else []
+            history_context = "\n".join(recent_history) if recent_history else "无对话历史"
+            
+            fallback_prompt = f"""## 最近对话历史：
+{history_context}
+
+请基于对话历史，生成合适的CBT疗愈师回应。"""
+            system_content = PromptTemplates.CBT_THERAPIST_SYSTEM_PROMPT
+            
+            print("=" * 50, flush=True)
+            print("🔍 DEBUG - FALLBACK_RESPONSE LLM CALL", flush=True)
+            print(f"🔍 DEBUG - 历史记录条数: {len(updated_history)}", flush=True)
+            print("SYSTEM PROMPT:", flush=True)
+            print(system_content, flush=True)
+            print("USER PROMPT:", flush=True)
+            print(fallback_prompt, flush=True)
+            print("=" * 50, flush=True)
             
             response = self.llm.invoke([
                 SystemMessage(content=system_content),
                 HumanMessage(content=fallback_prompt)
             ])
             
-            print("RESPONSE:")
-            print(response.content)
-            print("=" * 50)
+            print("RESPONSE:", flush=True)
+            print(response.content, flush=True)
+            print("=" * 50, flush=True)
             
-            state["final_response"] = response.content
-            return response.content, state
+            # 创建 AI 回复消息并添加到 messages 中
+            ai_response_message = AIMessage(content=response.content)
+            
+            # 更新状态，包含更新后的对话历史和消息
+            updated_state = state.copy()
+            updated_state["conversation_history"] = updated_history
+            updated_state["messages"] = state.get("messages", []) + [ai_response_message]
+            updated_state["final_response"] = response.content
+            
+            print(f"🔍 DEBUG - 添加AI回复到messages，新的messages数量: {len(updated_state['messages'])}", flush=True)
+            
+            return response.content, updated_state
             
         except Exception as e:
             fallback_msg = "抱歉，我现在无法很好地回应您。请您再试一次，或者告诉我您想要进行问诊还是想要闲聊。"

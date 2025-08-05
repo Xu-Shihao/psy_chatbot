@@ -7,8 +7,9 @@ import json
 from datetime import datetime
 from langchain.schema import HumanMessage, SystemMessage, AIMessage
 
-from agent_types import InterviewState
+from agent import InterviewState
 from scid5_knowledge import scid5_kb
+from prompts import PromptTemplates
 
 
 class InterviewFlowHandler:
@@ -19,46 +20,14 @@ class InterviewFlowHandler:
     
     def start_interview(self, state: InterviewState) -> InterviewState:
         """开始问诊 - 生成自我介绍和引导开场白"""
-        system_message = SystemMessage(content="""
-        你的名字叫灵溪智伴，是一个心理咨询师，能根据用户的回答来进行预问诊和心理疏导。
-
-        请遵循以下原则：
-        1. 保持专业、同理心和非批判的态度
-        2. 根据用户的情感状态提供足够的共情回应
-        3. 基于用户回答进行适当的深入询问
-        4. 保持对话的自然对话的流畅性，不要过于机械化的提问，要像一个心理咨询师一样与用户对话
-        5. 如发现紧急情况（如自杀风险），立即提供危机干预信息
-        6. 提醒这是筛查工具，不能替代专业诊断
-
-        对话风格要求：
-        - 温暖、理解、非批判
-        - 适时表达关切和理解
-        - 鼓励用户分享更多细节
-        - 根据用户的情绪状态调整语气
-        - 以灵溪智伴的身份与用户建立专业而温暖的关系
-        """)
+        system_message = SystemMessage(content=PromptTemplates.COUNSELOR_SYSTEM_PROMPT)
         
         # 生成自我介绍和引导开场白
         try:
-            initial_prompt = """
-你的名字叫灵溪智伴，是一位温暖、专业的心理咨询师，正在与一位新的来访者开始第一次会面。
-
-请以灵溪智伴的身份生成一个自我介绍和开场白，要求：
-1. 温暖地介绍自己的姓名和身份（心理咨询师）
-2. 表达关心和欢迎来访者的感受
-3. 营造安全、无批判的咨询环境氛围
-4. 引导用户分享他们目前遇到的问题或想要谈论的事情
-5. 询问用户的主诉（最主要的困扰或希望解决的问题）
-6. 鼓励用户真实、详细地表达自己的感受和经历
-7. 语气要专业而温暖，像一位有经验的心理咨询师
-8. 让用户感到被理解和被接纳
-9. 必须要求用户尽可能全的表达出所有的问题
-
-请直接给出自我介绍和开场白，控制在250字以内。
-"""
+            initial_prompt = PromptTemplates.INITIAL_INTERVIEW_PROMPT
             
             print("=" * 50)
-            print("🔍 DEBUG - START_INTERVIEW LLM CALL")
+            print("🔍 DEBUG - START_INTERVIEW LLM CALL", flush=True)
             print("PROMPT:")
             print(initial_prompt)
             print("=" * 50)
@@ -71,30 +40,12 @@ class InterviewFlowHandler:
             print("=" * 50)
             
             # 添加重要说明
-            initial_response += """
-
-**重要说明：**
-- 这里是一个安全、保密的空间，请放心分享您的真实感受
-- 没有对错的答案，我在这里是为了理解和帮助您
-- 这是一个心理健康筛查工具，不能替代专业医疗诊断  
-- 如有任何紧急情况，请立即寻求专业帮助
-- 我们的对话完全保密"""
+            initial_response += PromptTemplates.IMPORTANT_DISCLAIMER
             
         except Exception as e:
-            print(f"🔍 DEBUG: LLM生成开头失败: {e}")
+            print(f"🔍 DEBUG: LLM生成开头失败: {e}", flush=True)
             # 如果LLM调用失败，使用备用开头
-            initial_response = """您好！我是灵溪智伴，一位心理咨询师。很高兴在这里与您相遇 😊
-
-首先，我想让您知道这里是一个安全、无批判的空间。我在这里是为了倾听和理解您，陪伴您一起面对您正在经历的困扰。
-
-我想请您跟我分享一下，是什么让您今天来到这里？您目前最主要的困扰或希望解决的问题是什么？请尽可能详细地告诉我您的感受和经历，不用担心说得不够好或不够准确。
-
-**重要说明：**
-- 这里是一个安全、保密的空间，请放心分享您的真实感受
-- 没有对错的答案，我在这里是为了理解和帮助您
-- 这是一个心理健康筛查工具，不能替代专业医疗诊断
-- 如有任何紧急情况，请立即寻求专业帮助
-- 我们的对话完全保密"""
+            initial_response = PromptTemplates.FALLBACK_INTERVIEW_INTRO + PromptTemplates.IMPORTANT_DISCLAIMER
         
         # 创建AI消息
         intro_message = AIMessage(content=initial_response)
@@ -172,56 +123,13 @@ class InterviewFlowHandler:
                 last_ai_response = msg.content
                 break
         
-        comprehensive_prompt = f"""
-基于以下对话情境，分析用户的回答，并根据'现在需要提问的问题'生成完整的回应：
-
-## 最近对话历史：
-{conversation_context}
-You: {last_ai_response}
-User: {last_user_message}
-
-## 当前筛查类型：
-{current_disorder_focus}
-
-## 现在需要提问的问题：
-{next_question_info}
-
-## 请进行以下分析和回应：
-1. **情感理解**：识别用户回答中的情感状态和心理需求
-2. **内容分析**：分析用户回答的完整性和需要进一步了解的内容
-3. **风险评估**：评估是否存在紧急情况或风险
-4. **综合回应**：结合共情回应和下一个问题，生成自然的对话
-
-## next_question_id 说明
-"depression_screening": "抑郁症筛查",
-"anxiety_screening": "焦虑症筛查",
-"ocd_screening": "强迫症筛查",
-"ptsd_screening": "创伤后应激障碍筛查",
-"psychotic_screening": "精神病性障碍筛查",
-
-
-##特别说明：
-- 如果下一个问题信息显示"评估已完成"，则设置assessment_complete为true，next_question_id为null
-- 如果下一个问题信息包含"生成summary报告并进入CBT疗愈模式"，则设置assessment_complete为true，next_question_id为null
-- 评估完成后不要继续下一个疾病类型的询问，而是完成当前评估并生成总结报告
-- 如果当前是anxiety_screening，根据用户回答决定：有焦虑症状时设置next_question_id为"anxiety_symptoms"，否则设置为"depression_screening"
-- 不要让next_question_id停留在相同值，应该根据评估进度推进
-- 如果用户提出问题要共情的回复问题，然后再追问
-
-请以JSON格式回复：
-{{
-    "emotional_state": "用户的情感状态描述",
-    "risk_level": "low/medium/high",
-    "risk_indicators": ["具体风险指标"],
-    "understanding_summary": "对用户回答的理解总结",
-    "has_next_question": true/false,
-    "next_question_id": "next_question_id的值或null",
-    "comprehensive_response": "包含共情回应和{next_question_info}的完整回复",
-    "assessment_complete": true/false
-}} """
+        comprehensive_prompt = PromptTemplates.get_comprehensive_analysis_prompt(
+            conversation_context, last_ai_response, last_user_message, 
+            current_disorder_focus, next_question_info
+        )
         
         print("=" * 50)
-        print("🔍 DEBUG - UNDERSTAND_AND_RESPOND (COMPREHENSIVE) LLM CALL")
+        print("🔍 DEBUG - UNDERSTAND_AND_RESPOND (COMPREHENSIVE) LLM CALL", flush=True)
         print("PROMPT:")
         print(comprehensive_prompt)
         print("=" * 50)
@@ -341,7 +249,7 @@ User: {last_user_message}
     def _get_next_question_info(self, current_question_id: str, user_response: str, state: InterviewState = None) -> str:
         """获取下一个问题的信息用于生成回应，基于诊断标准动态选择"""
         print("=" * 80)
-        print("🔍 DEBUG - _get_next_question_info 方法开始")
+        print("🔍 DEBUG - _get_next_question_info 方法开始", flush=True)
         print(f"📥 输入参数:")
         print(f"   current_question_id: {current_question_id}")
         print(f"   user_response: {user_response[:100]}..." if len(user_response) > 100 else f"   user_response: {user_response}")
@@ -507,7 +415,7 @@ User: {last_user_message}
             if current_symptom not in assessed_criteria[current_disorder]:
                 assessed_criteria[current_disorder].append(current_symptom)
                 
-                print(f"🔍 DEBUG - 更新已评估标准:")
+                print(f"🔍 DEBUG - 更新已评估标准:", flush=True)
                 print(f"   障碍类型: {current_disorder}")
                 print(f"   新增症状标准: {current_symptom}")
                 print(f"   当前已评估标准: {assessed_criteria[current_disorder]}")
@@ -550,7 +458,7 @@ User: {last_user_message}
             if remaining_criteria:
                 # 返回下一个待评估的症状标准
                 next_symptom = remaining_criteria[0]
-                print(f"🔍 DEBUG - _get_current_symptom_from_question:")
+                print(f"🔍 DEBUG - _get_current_symptom_from_question:", flush=True)
                 print(f"   障碍类型: {disorder_type} -> {mapped_disorder_type}")
                 print(f"   诊断标准: {disorder_key}")
                 print(f"   所有标准: {criteria.criteria}")

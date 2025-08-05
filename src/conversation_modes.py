@@ -4,10 +4,10 @@
 """
 
 import json
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import HumanMessage, SystemMessage, AIMessage
 
-from agent_types import InterviewState
-from enhanced_intent_detection import EnhancedIntentDetector
+from agent import InterviewState
+from workflow import EnhancedIntentDetector
 
 
 class ConversationModeHandler:
@@ -126,9 +126,10 @@ class ConversationModeHandler:
             mode = "interview"
             will_lock = True
         else:
-            # 默认继续问诊
-            mode = "continue_interview" if state.get("conversation_mode") == "interview" else "interview"
-            will_lock = True
+            # 默认切换到CBT闲聊模式（没有明确问诊意图时）
+            mode = "chat"
+            will_lock = False
+            print(f"🔄 简单检测：没有明确意图，切换到CBT闲聊模式", flush=True)
         
         return {
             **state,
@@ -149,48 +150,53 @@ class ConversationModeHandler:
         user_messages = [msg for msg in state["messages"] if isinstance(msg, HumanMessage)]
         latest_user_message = user_messages[-1].content if user_messages else ""
         
-        # 构建CBT疗愈师的系统提示
-        cbt_system_prompt = """你是灵溪智伴，一位专业的认知行为疗法(CBT)心理疗愈师。
+        # 更新对话历史 - 添加上一轮AI回复和当前用户消息（类似 fallback_response）
+        updated_history = state.get("conversation_history", []).copy()
         
-你的任务是：
-1. 生成温暖、理解和支持性的对话
-2. 运用CBT技巧帮助用户认识和改变消极思维模式
-3. 引导用户探索情感和行为模式
-4. 提供实用的应对策略和技巧
-5. 创造安全、非批判的对话环境
-
-对话风格：
-- 温暖、共情、专业
-- 问开放性问题引导思考
-- 适时提供CBT技巧和策略
-- 鼓励用户表达内心感受
-- 帮助用户建立积极的认知模式
-
-请注意：
-- 这是支持性闲聊，不是正式的问诊
-- 如果用户提到严重的心理健康问题，建议寻求专业帮助
-- 保持对话的轻松和支持性
-- 不生成开头的感情表情的标签，直接生成对话内容
-- 生成内容是对话口吻，而不是这种结构化的回答
-- 提的问题要少，不要太多"""
+        # 添加上一轮的AI回复（如果存在且不是初始介绍）
+        messages = state.get("messages", [])
+        
+        print(f"🔍 DEBUG - CBT Messages数量: {len(messages)}", flush=True)
+        for i, msg in enumerate(messages):
+            print(f"🔍 DEBUG - CBT Message[{i}]: {type(msg).__name__}", flush=True)
+        
+        # 只有当有真正的对话历史时，才添加AI回复
+        if len(messages) > 3:  # SystemMessage + AIMessage(intro) + HumanMessage + AIMessage(real_response)
+            last_ai_message = None
+            # 从后往前找，跳过可能的初始介绍
+            for msg in reversed(messages[2:]):  # 跳过前两个消息（SystemMessage + 初始介绍）
+                if isinstance(msg, AIMessage):
+                    last_ai_message = msg.content.strip()
+                    break
+            if last_ai_message:
+                updated_history.append(f"You: {last_ai_message}")
+                print(f"🔍 DEBUG - CBT添加AI历史: {last_ai_message[:50]}...", flush=True)
+        
+        # 添加当前用户消息
+        updated_history.append(f"User: {latest_user_message}")
+        print(f"🔍 DEBUG - CBT添加用户消息: {latest_user_message}", flush=True)
+        
+        # 获取最近20轮的历史记录用于prompt
+        recent_history = updated_history[-20:] if len(updated_history) > 0 else []
+        history_context = "\n".join(recent_history) if recent_history else "无对话历史"
+        
+        # 使用统一的prompt模板
+        from prompts import PromptTemplates
+        cbt_system_prompt = PromptTemplates.CBT_THERAPIST_SYSTEM_PROMPT
         
         # 如果是评估完成后的闲聊
         if state.get("conversation_mode") == "assessment_complete":
-            cbt_system_prompt += """
-            
-            特别提醒：用户刚刚完成了心理健康评估，现在进入闲聊环节。请：
-            1. 感谢用户的参与和配合
-            2. 确认评估已完成
-            3. 提供后续的心理支持和建议
-            4. 询问用户是否有其他想聊的话题
-            """
+            cbt_system_prompt += PromptTemplates.CBT_ASSESSMENT_COMPLETE_ADDON
         
         try:
-            # 生成CBT疗愈师的回复
-            cbt_prompt = f"用户说：{latest_user_message}"
+            # 生成包含历史对话的CBT疗愈师回复
+            cbt_prompt = f"""## 最近对话历史：
+{history_context}
+
+请基于对话历史，生成合适的CBT疗愈师回应。"""
             
             print("=" * 50)
-            print("🔍 DEBUG - CBT_THERAPIST_RESPONSE LLM CALL")
+            print("🔍 DEBUG - CBT_THERAPIST_RESPONSE LLM CALL", flush=True)
             print("SYSTEM PROMPT:")
             print(cbt_system_prompt)
             print("USER PROMPT:")
@@ -214,26 +220,25 @@ class ConversationModeHandler:
                 """
                 final_response = completion_message + "\n\n" + final_response
             
-            return {
-                **state,
-                "final_response": final_response,
-                "chat_therapist_active": True
-            }
+            # 创建 AI 回复消息并添加到 messages 中（类似 fallback_response）
+            ai_response_message = AIMessage(content=final_response)
+            
+            # 更新状态，包含更新后的对话历史和消息
+            updated_state = state.copy()
+            updated_state["conversation_history"] = updated_history
+            updated_state["messages"] = state.get("messages", []) + [ai_response_message]
+            updated_state["final_response"] = final_response
+            updated_state["chat_therapist_active"] = True
+            
+            print(f"🔍 DEBUG - CBT添加AI回复到messages，新的messages数量: {len(updated_state['messages'])}", flush=True)
+            print(f"🔍 DEBUG - CBT历史记录条数: {len(updated_history)}", flush=True)
+            
+            return updated_state
             
         except Exception as e:
             print(f"CBT疗愈师响应生成失败: {e}")
             # 后备响应
-            fallback_response = """
-            作为您的心理支持伙伴，我很高兴能和您聊天。您想聊什么呢？
-            
-            我可以：
-            - 倾听您的感受和想法
-            - 提供情绪支持和理解
-            - 分享一些心理健康的小技巧
-            - 陪您探讨生活中的各种话题
-            
-            请告诉我，您今天感觉如何？
-            """
+            fallback_response = PromptTemplates.CBT_FALLBACK_RESPONSE
             
             return {
                 **state,

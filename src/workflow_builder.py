@@ -5,7 +5,7 @@
 
 from langgraph.graph import StateGraph, END
 
-from agent_types import InterviewState
+from agent import InterviewState
 from scid5_knowledge import scid5_kb
 
 

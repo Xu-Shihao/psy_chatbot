@@ -9,7 +9,8 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 from langchain.schema import HumanMessage, SystemMessage, AIMessage
 
-from agent_types import InterviewState
+from agent import InterviewState
+from prompts import PromptTemplates, KeywordLibrary
 
 
 class EnhancedIntentDetector:
@@ -19,44 +20,11 @@ class EnhancedIntentDetector:
         self.llm = llm
         self.workflow_mode = workflow_mode
         
-        # 症状关键词库 - 分级管理
-        self.symptom_keywords = {
-            "high_severity": [
-                "自杀", "自残", "想死", "轻生", "伤害自己", "不想活", "结束生命",
-                "严重抑郁", "无法控制", "完全绝望", "崩溃", "精神崩溃"
-            ],
-            "medium_severity": [
-                "抑郁", "焦虑", "恐慌", "失眠", "噩梦", "幻觉", "妄想",
-                "强迫", "创伤", "PTSD", "双相", "躁郁", "精神分裂"
-            ],
-            "low_severity": [
-                "情绪低落", "心情不好", "压力大", "紧张", "担心", "忧虑",
-                "睡眠不好", "食欲不振", "注意力不集中", "疲劳", "烦躁"
-            ]
-        }
-        
-        # 闲聊意图关键词
-        self.chat_keywords = [
-            "闲聊", "聊天", "谈心", "聊聊", "随便聊", "陪我聊", "说说话",
-            "聊天吧", "想聊天", "无聊", "陪陪我", "找人说话"
-        ]
-        
-        # 问诊意图关键词
-        self.interview_keywords = [
-            "评估", "检查", "问诊", "测试", "诊断", "咨询", "了解我的情况",
-            "心理健康", "精神状态", "心理状况", "开始评估"
-        ]
-        
-        # 情绪状态检测模式
-        self.emotion_patterns = {
-            "distressed": ["痛苦", "难受", "煎熬", "崩溃", "绝望", "无助"],
-            "anxious": ["紧张", "担心", "恐惧", "害怕", "焦虑", "不安"],
-            "sad": ["伤心", "难过", "沮丧", "失落", "悲伤", "郁闷"],
-            "angry": ["愤怒", "生气", "烦躁", "气愤", "恼火", "火大"],
-            "confused": ["困惑", "迷茫", "不知道", "搞不清", "混乱", "糊涂"],
-            "hopeful": ["希望", "期待", "想要", "希望能", "盼望", "憧憬"],
-            "resistant": ["不想", "拒绝", "不愿意", "算了", "没必要", "不用了"]
-        }
+        # 使用统一的关键词库
+        self.symptom_keywords = KeywordLibrary.SYMPTOM_KEYWORDS
+        self.chat_keywords = KeywordLibrary.CHAT_KEYWORDS
+        self.interview_keywords = KeywordLibrary.INTERVIEW_KEYWORDS
+        self.emotion_patterns = KeywordLibrary.EMOTION_PATTERNS
     
     def detect_conversation_mode(self, state: InterviewState) -> InterviewState:
         """增强的对话模式检测"""
@@ -284,46 +252,15 @@ class EnhancedIntentDetector:
         conversation_history = context["conversation_history"]
         
         # 构建更智能的检测提示
-        detection_prompt = f"""
-        作为专业的心理健康对话分析师，请分析用户的意图和需求：
-
-        **当前对话信息：**
-        - 用户输入："{latest_message}"
-        - 对话轮数：第{current_turn + 1}轮
-        - 检测到的情绪状态：{emotional_state}
-        - 症状严重程度：{symptom_severity}
-        - 最近对话历史：{conversation_history[-2:] if len(conversation_history) >= 2 else conversation_history}
-
-        **分析维度：**
-        1. **意图分析**：用户是想要心理评估、症状问诊，还是寻求情感支持、闲聊陪伴？
-        2. **紧急程度**：用户的状态是否需要立即关注和专业干预？
-        3. **参与意愿**：用户对不同类型的对话（问诊vs闲聊）的开放程度如何？
-        4. **情绪需求**：用户当前最需要的是专业评估还是情感支持？
-
-        **判断标准：**
-        - "interview"：用户提及具体症状、寻求评估、想了解自己的心理状况
-        - "continue_interview"：用户正在回答问诊问题或继续描述症状
-        - "chat"：用户明确想要闲聊、寻求陪伴、或者情绪低落需要支持
-        - "supportive_chat"：用户情绪困扰但不需要正式评估，需要温暖陪伴
-
-        请以JSON格式回复：
-        {{
-            "primary_intent": "interview/continue_interview/chat/supportive_chat",
-            "confidence": 0.0-1.0,
-            "reasoning": "详细的分析理由",
-            "key_indicators": ["关键指标1", "关键指标2"],
-            "emotional_needs": "用户的情感需求分析",
-            "urgency_level": "low/medium/high",
-            "recommended_approach": "建议的对话方式",
-            "alternative_intent": "次要意图（如果有）"
-        }}
-        """
+        detection_prompt = PromptTemplates.get_enhanced_intent_detection_prompt(
+            latest_message, current_turn, emotional_state, symptom_severity, conversation_history
+        )
         
         try:
             print("🧠 增强意图检测 - LLM分析中...")
             
             detection_response = self.llm.invoke([
-                SystemMessage(content="你是专业的心理健康对话分析师，具备深度分析用户意图和情感需求的能力。"),
+                SystemMessage(content=PromptTemplates.INTENT_ANALYST_SYSTEM_PROMPT),
                 HumanMessage(content=detection_prompt)
             ])
             
@@ -356,7 +293,7 @@ class EnhancedIntentDetector:
                 "reasoning": f"用户情绪状态为{emotional_state}，需要支持性对话",
                 "urgency_level": "medium"
             }
-        elif any(keyword in message for keyword in self.chat_keywords):
+        elif any(keyword in message for keyword in KeywordLibrary.CHAT_KEYWORDS):
             return {
                 "primary_intent": "chat",
                 "confidence": 0.8,
@@ -393,9 +330,12 @@ class EnhancedIntentDetector:
             chat_active = True
             should_lock = False
             
-        # 对于低置信度的判断，给用户更多选择权
+        # 对于低置信度的判断，默认切换到CBT闲聊模式
         if confidence < 0.6 and current_turn < 3:
-            final_mode = "flexible_start"  # 新增的灵活开始模式
+            final_mode = "chat"  # 没有明确问诊意图时，默认进入CBT闲聊模式
+            chat_active = True
+            should_lock = False
+            print(f"🔄 意图不明确（置信度: {confidence:.2f}），切换到CBT闲聊模式", flush=True)
             
         return {
             **state,
