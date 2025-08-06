@@ -218,11 +218,6 @@ def process_user_input(user_input: str):
             # 更新状态
             st.session_state.interview_state = updated_state
             
-            # 检查是否有final_response字段（CBT疗愈师响应）
-            if updated_state.get("final_response"):
-                ai_response = updated_state["final_response"]
-                print(f"🔍 DEBUG: 使用CBT疗愈师响应 = {ai_response}", flush=True)
-            
             # 检查是否评估完成
             if updated_state.get("assessment_complete", False):
                 st.session_state.assessment_complete = True

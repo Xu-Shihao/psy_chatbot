@@ -15,4 +15,4 @@ echo "启动Streamlit应用..."
 echo "日志文件保存在: $logfile"
 
 # 将输出重定向到日志文件
-streamlit run src/streamlit_ui.py --server.port 8503 2>&1 | tee "$logfile"
+streamlit run src/streamlit_ui.py --server.port 8505 2>&1 | tee "$logfile"

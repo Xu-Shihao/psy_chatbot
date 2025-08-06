@@ -13,10 +13,10 @@ class Config:
     
     # OpenAI API配置
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+    OPENAI_API_BASE: str = os.getenv("OPENAI_API_BASE", "https://openrouter.ai/api/v1")
     
     # 模型配置
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "gpt-4-turbo-preview")
+    MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen/qwen3-8b:free")
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
     MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "2048"))
     

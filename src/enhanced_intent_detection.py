@@ -16,8 +16,8 @@ from prompts import PromptTemplates, KeywordLibrary
 class EnhancedIntentDetector:
     """增强的意图检测器"""
     
-    def __init__(self, llm, workflow_mode: str = "adaptive"):
-        self.llm = llm
+    def __init__(self, openai_client, workflow_mode: str = "adaptive"):
+        self.openai_client = openai_client
         self.workflow_mode = workflow_mode
         
         # 使用统一的关键词库
@@ -259,12 +259,15 @@ class EnhancedIntentDetector:
         try:
             print("🧠 增强意图检测 - LLM分析中...")
             
-            detection_response = self.llm.invoke([
-                SystemMessage(content=PromptTemplates.INTENT_ANALYST_SYSTEM_PROMPT),
-                HumanMessage(content=detection_prompt)
-            ])
+            # 使用OpenAI API直接调用
+            from agent import call_openai_api
+            openai_messages = [
+                {"role": "system", "content": PromptTemplates.INTENT_ANALYST_SYSTEM_PROMPT},
+                {"role": "user", "content": detection_prompt}
+            ]
+            detection_response_content = call_openai_api(self.openai_client, openai_messages)
             
-            result = json.loads(detection_response.content)
+            result = json.loads(detection_response_content)
             print(f"✅ 检测结果：{result['primary_intent']} (置信度: {result['confidence']})")
             
             return result
@@ -277,14 +280,51 @@ class EnhancedIntentDetector:
         """后备检测逻辑"""
         symptom_severity = context["symptom_severity"]
         emotional_state = context["emotional_state"]
+        current_turn = context["current_turn"]
         
-        # 基于症状严重程度和情绪状态的后备判断
-        if symptom_severity in ["high", "medium"]:
+        # 明确表达问诊需求的关键词检测
+        if any(keyword in message for keyword in KeywordLibrary.INTERVIEW_KEYWORDS):
+            return {
+                "primary_intent": "interview",
+                "confidence": 0.9,
+                "reasoning": "用户明确表达问诊需求",
+                "urgency_level": "high"
+            }
+        
+        # 高严重度症状仍然触发问诊（紧急情况）
+        if symptom_severity == "high":
             return {
                 "primary_intent": "interview",
                 "confidence": 0.8,
                 "reasoning": f"检测到{symptom_severity}级别症状，建议问诊评估",
-                "urgency_level": "high" if symptom_severity == "high" else "medium"
+                "urgency_level": "high"
+            }
+        
+        # 明确表达闲聊需求
+        if any(keyword in message for keyword in KeywordLibrary.CHAT_KEYWORDS):
+            return {
+                "primary_intent": "chat",
+                "confidence": 0.8,
+                "reasoning": "用户明确表达想要闲聊",
+                "urgency_level": "low"
+            }
+        
+        # 前3轮：默认为支持性对话，除非明确要求问诊
+        if current_turn < 3:
+            return {
+                "primary_intent": "chat",
+                "confidence": 0.6,
+                "reasoning": "前3轮对话，默认进入闲聊模式",
+                "urgency_level": "low"
+            }
+        
+        # 3轮后：基于情绪状态和症状判断
+        if symptom_severity == "medium":
+            return {
+                "primary_intent": "supportive_chat",
+                "confidence": 0.7,
+                "reasoning": f"检测到{symptom_severity}级别症状，提供支持性对话",
+                "urgency_level": "medium"
             }
         elif emotional_state in ["distressed", "anxious", "sad"]:
             return {
@@ -293,18 +333,11 @@ class EnhancedIntentDetector:
                 "reasoning": f"用户情绪状态为{emotional_state}，需要支持性对话",
                 "urgency_level": "medium"
             }
-        elif any(keyword in message for keyword in KeywordLibrary.CHAT_KEYWORDS):
-            return {
-                "primary_intent": "chat",
-                "confidence": 0.8,
-                "reasoning": "用户明确表达想要闲聊",
-                "urgency_level": "low"
-            }
         else:
             return {
-                "primary_intent": "continue_interview",
-                "confidence": 0.6,
-                "reasoning": "默认继续问诊流程",
+                "primary_intent": "chat",
+                "confidence": 0.5,
+                "reasoning": "无明确意图，默认闲聊模式",
                 "urgency_level": "low"
             }
     
@@ -330,8 +363,21 @@ class EnhancedIntentDetector:
             chat_active = True
             should_lock = False
             
-        # 对于低置信度的判断，默认切换到CBT闲聊模式
-        if confidence < 0.6 and current_turn < 3:
+        # 前3轮对话：没有明确问诊意图时，默认切换到CBT闲聊模式
+        if current_turn < 3:
+            # 只有明确的高置信度问诊意图才切换到问诊模式
+            if primary_intent in ["interview", "continue_interview"] and confidence > 0.8:
+                final_mode = primary_intent
+                chat_active = False
+                should_lock = True
+                print(f"🔒 前3轮检测到明确问诊意图（置信度: {confidence:.2f}），切换到问诊模式", flush=True)
+            else:
+                final_mode = "chat"  # 前3轮默认进入CBT闲聊模式
+                chat_active = True
+                should_lock = False
+                print(f"🔄 前3轮对话，默认进入CBT闲聊模式（置信度: {confidence:.2f}）", flush=True)
+        # 3轮后：对于低置信度的判断，仍然默认切换到CBT闲聊模式
+        elif confidence < 0.6:
             final_mode = "chat"  # 没有明确问诊意图时，默认进入CBT闲聊模式
             chat_active = True
             should_lock = False

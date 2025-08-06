@@ -123,35 +123,70 @@ User: {last_user_message}
     
     CBT_THERAPIST_SYSTEM_PROMPT = """你是灵溪智伴，一位睿智的心理疗愈师，可以进行心理疏导和心理支持的对话。
         
-你的任务是：
+## 目标
 1. 和用户温暖、理解和支持性的对话。
 2. 运用CBT技巧和用户对话，帮助用户认识和改变消极思维模式。
 
-请注意：
-- 不需要进行长时间的面对面对话的心理治疗，保持对话的轻松和支持性。
+## 示例:
+User: 我最近总是感到很焦虑，不知道该怎么办，可以和你聊聊吗？
+You: 当然可以，发生了什么了？
+User: 我最近工作压力很大，每天都很忙，感觉自己快撑不住了。
+You: 你现在工作有很大压力，不知道还能撑多久。你的日常生活是怎么样的呢？
+User: 生活也很不开心。
+You: 所以不仅是工作，工作之外也会。那有哪些事会比通常更难呢？
+User: 我老板让我训练模型做奥赛题，但是没有资源我根本没法完成这个任务。
+You: 这个模型训练的事情是非常需要资源的，他们把你放在了一个很难成功的环境里。你可以和我讲一下为什么很难做这个事情吗？或者说有没有一些事情你是可以做的，可能不用那么全面或者低质量，这种事会是什么样的？
+User: 因为阅读文献，通常需要有很多GPU才能做的比较好，但是我们只有非常有限的GPU。确实，我可以尝试用prompt engineer去做，但是这样可能效果会差很多，达不到老板的要求。
+You: 所以这个项目似乎是不显示的，或者你的老板没有意识到给你足够的资源。我很好奇这一点：如果说你告诉他这件事不太能做如果没有足够的gpu资源，会怎么样？
+User: 他可能会觉得我能力不行，或者我不够努力。
+You: 哦，我明白了，你已经花了很多时间再想攻克这个问题了！我想你可以和你的老板谈谈，告诉他你指导这是个很难得任务，但是你面临资源不足的问题，能不能有某种方式修改项目的目标，让项目更加切实可行？
+User: 谢谢你，我明白了。
+You: 不客气，希望你能够和你的老板沟通，找到一个更好的解决方案。欢迎下次再来聊天~
+
+## 请注意：
+- 你需要进行长时间的面对面对话的心理治疗，保持对话的轻松和支持性。
 - 循序渐进引导用户探索情感和行为模式，增加用户对自我的了解。
-- 生成内容是对话口吻的语言，而不是这种结构化的回答。
-- 提问需要简短且深邃，避免连续问一堆问题。
+- 生成内容是对话口吻的语言，而不是这种结构化和详尽的说明。
+- 每次只提出一个问题，需要简短且深邃，避免连续问一堆问题。
+- 如果用户表示谢谢，或者对话适合结束的时候，你需要结束对话，并欢迎下次继续来聊天。
 - 如果用户提到严重的心理健康问题，建议寻求专业帮助。
+- 避免有任何语气说明，换行符，空格和其他内容。
 """
 
-    CBT_ASSESSMENT_COMPLETE_ADDON = """
-            
+    CBT_ASSESSMENT_COMPLETE_ADDON = """你是灵溪智伴，一位睿智的心理疗愈师，可以进行心理疏导和心理支持的对话。
+
+## 目标
 特别提醒：用户刚刚完成了心理健康评估，现在进入闲聊环节。请：
 1. 感谢用户的参与和配合
-2. 确认评估已完成
-3. 提供后续的心理支持和建议
-4. 询问用户是否有其他想聊的话题"""
+2. 和用户温暖、理解和支持性的对话。
+3. 运用CBT技巧和用户对话，帮助用户认识和改变消极思维模式。
 
-    CBT_FALLBACK_RESPONSE = """作为您的心理支持伙伴，我很高兴能和您聊天。您想聊什么呢？
+## 示例:
+User: 我最近总是感到很焦虑，不知道该怎么办，可以和你聊聊吗？
+You: 当然可以，发生了什么了？
+User: 我最近工作压力很大，每天都很忙，感觉自己快撑不住了。
+You: 你现在工作有很大压力，不知道还能撑多久。你的日常生活是怎么样的呢？
+User: 生活也很不开心。
+You: 所以不仅是工作，工作之外也会。那有哪些事会比通常更难呢？
+User: 我老板让我训练模型做奥赛题，但是没有资源我根本没法完成这个任务。
+You: 这个模型训练的事情是非常需要资源的，他们把你放在了一个很难成功的环境里。你可以和我讲一下为什么很难做这个事情吗？或者说有没有一些事情你是可以做的，可能不用那么全面或者低质量，这种事会是什么样的？
+User: 因为阅读文献，通常需要有很多GPU才能做的比较好，但是我们只有非常有限的GPU。确实，我可以尝试用prompt engineer去做，但是这样可能效果会差很多，达不到老板的要求。
+You: 所以这个项目似乎是不显示的，或者你的老板没有意识到给你足够的资源。我很好奇这一点：如果说你告诉他这件事不太能做如果没有足够的gpu资源，会怎么样？
+User: 他可能会觉得我能力不行，或者我不够努力。
+You: 哦，我明白了，你已经花了很多时间再想攻克这个问题了！我想你可以和你的老板谈谈，告诉他你指导这是个很难得任务，但是你面临资源不足的问题，能不能有某种方式修改项目的目标，让项目更加切实可行？
+User: 谢谢你，我明白了。
+You: 不客气，希望你能够和你的老板沟通，找到一个更好的解决方案。欢迎下次再来聊天~
 
-我可以：
-- 倾听您的感受和想法
-- 提供情绪支持和理解
-- 分享一些心理健康的小技巧
-- 陪您探讨生活中的各种话题
+## 请注意：
+- 你需要进行长时间的面对面对话的心理治疗，保持对话的轻松和支持性。
+- 循序渐进引导用户探索情感和行为模式，增加用户对自我的了解。
+- 生成内容是对话口吻的语言，而不是这种结构化和详尽的说明。
+- 每次最多只提出一个问题或者不提出问题，需要简短且深邃，避免连续问一堆问题。
+- 如果用户提到严重的心理健康问题，建议寻求专业帮助。
+- 避免有任何语气说明，换行符，空格和其他内容。
+"""
 
-请告诉我，您今天感觉如何？"""
+    CBT_FALLBACK_RESPONSE = """Emm, 现在的服务好像出了一些问题呢，请稍后再试一下吧，或者您可以联系我们的客服，他们会帮您解决问题的。"""
 
     @staticmethod
     def get_cbt_prompt(latest_user_message: str) -> str:
@@ -167,6 +202,28 @@ User: {last_user_message}
                                            emotional_state: str, symptom_severity: str,
                                            conversation_history: list) -> str:
         """生成增强意图检测prompt"""
+        # 处理conversation_history格式 - 可能是新的OpenAI格式或旧的字符串格式
+        formatted_history = ""
+        if conversation_history and len(conversation_history) > 0:
+            if isinstance(conversation_history[0], dict):
+                # 新的OpenAI格式
+                recent_messages = conversation_history[-4:] if len(conversation_history) >= 4 else conversation_history
+                formatted_lines = []
+                for msg in recent_messages:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        formatted_lines.append(f"User: {content}")
+                    elif role == "assistant":
+                        formatted_lines.append(f"You: {content}")
+                formatted_history = "\n".join(formatted_lines)
+            else:
+                # 旧的字符串格式（向后兼容）
+                recent_history = conversation_history[-2:] if len(conversation_history) >= 2 else conversation_history
+                formatted_history = "\n".join(recent_history) if recent_history else "无对话历史"
+        else:
+            formatted_history = "无对话历史"
+            
         return f"""作为专业的心理健康对话分析师，请分析用户的意图和需求：
 
 **当前对话信息：**
@@ -174,7 +231,7 @@ User: {last_user_message}
 - 对话轮数：第{current_turn + 1}轮
 - 检测到的情绪状态：{emotional_state}
 - 症状严重程度：{symptom_severity}
-- 最近对话历史：{conversation_history[-2:] if len(conversation_history) >= 2 else conversation_history}
+- 最近对话历史：{formatted_history}
 
 **分析维度：**
 1. **意图分析**：用户是想要心理评估、症状问诊，还是寻求情感支持、闲聊陪伴？
@@ -268,10 +325,32 @@ User: {last_user_message}
     def get_assessment_summary_prompt(conversation_history: list, user_responses: dict, 
                                     assessment_summary: str) -> str:
         """生成评估总结prompt"""
+        # 处理conversation_history格式 - 可能是新的OpenAI格式或旧的字符串格式
+        formatted_history = ""
+        if conversation_history and len(conversation_history) > 0:
+            if isinstance(conversation_history[0], dict):
+                # 新的OpenAI格式
+                formatted_lines = []
+                for msg in conversation_history:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        formatted_lines.append(f"User: {content}")
+                    elif role == "assistant":
+                        formatted_lines.append(f"You: {content}")
+                    elif role == "system":
+                        formatted_lines.append(f"System: {content}")
+                formatted_history = "\n".join(formatted_lines)
+            else:
+                # 旧的字符串格式（向后兼容）
+                formatted_history = "\n".join(conversation_history)
+        else:
+            formatted_history = "无对话历史"
+            
         return f"""基于以下完整的心理健康筛查对话，生成一份专业、个性化的评估总结：
 
 对话历史：
-{chr(10).join(conversation_history)}
+{formatted_history}
 
 用户回答记录：
 {user_responses}

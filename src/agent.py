@@ -6,11 +6,161 @@
 from typing import Dict, List, Optional, TypedDict, Annotated, Tuple
 from datetime import datetime
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph.message import AnyMessage, add_messages
+import openai
 
 from config import config
 from prompts import PromptTemplates
+
+
+# =========================
+# 工具函数
+# =========================
+
+def messages_to_openai_format(messages: List[AnyMessage]) -> List[Dict[str, str]]:
+    """
+    将LangChain消息格式转换为OpenAI消息格式
+    
+    Args:
+        messages: LangChain消息列表
+        
+    Returns:
+        OpenAI格式的消息列表 [{"role": "user", "content": "..."}, ...]
+    """
+    openai_messages = []
+    
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            openai_messages.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            openai_messages.append({"role": "assistant", "content": msg.content})
+        elif isinstance(msg, SystemMessage):
+            openai_messages.append({"role": "system", "content": msg.content})
+    
+    return openai_messages
+
+
+def openai_to_messages_format(openai_messages: List[Dict[str, str]]) -> List[AnyMessage]:
+    """
+    将OpenAI消息格式转换为LangChain消息格式
+    
+    Args:
+        openai_messages: OpenAI格式的消息列表
+        
+    Returns:
+        LangChain消息列表
+    """
+    langchain_messages = []
+    
+    for msg in openai_messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        
+        if role == "user":
+            langchain_messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            langchain_messages.append(AIMessage(content=content))
+        elif role == "system":
+            langchain_messages.append(SystemMessage(content=content))
+    
+    return langchain_messages
+
+
+def update_conversation_history_openai(state: dict, ai_message: str = None, user_message: str = None, system_prompt: str = None) -> List[Dict[str, str]]:
+    """
+    更新对话历史，使用OpenAI格式
+    
+    Args:
+        state: 当前状态
+        ai_message: AI消息内容（可选）
+        user_message: 用户消息内容（可选）
+        system_prompt: system prompt（可选）
+    Returns:
+        更新后的对话历史（OpenAI格式）
+    """
+    history = state.get("conversation_history", []).copy()
+
+    # 添加system prompt
+    if system_prompt and len(history) == 0:
+        history.append({"role": "system", "content": system_prompt})
+    elif system_prompt and len(history) > 0 and history[0]["role"] == "system":
+        history[0]["content"] = system_prompt
+        
+    # 添加AI消息
+    if ai_message:
+        history.append({"role": "assistant", "content": ai_message})
+    
+    # 添加用户消息
+    if user_message:
+        history.append({"role": "user", "content": user_message})
+    
+    return history
+
+
+def format_conversation_context(conversation_history: List[Dict[str, str]], max_turns: int = 10) -> List[Dict[str, str]]:
+    """
+    获取包含system prompt和最近max_turns轮对话的历史记录
+    
+    Args:
+        conversation_history: OpenAI格式的对话历史
+        max_turns: 最大保留轮数（user-assistant为一轮）
+        
+    Returns:
+        包含system prompt和最近对话的List[Dict[str, str]]
+    """
+    if not conversation_history:
+        return []
+    
+    result = []
+    
+    # 保留第一个system prompt
+    if conversation_history[0]["role"] == "system":
+        result.append(conversation_history[0])
+        conversation_history = conversation_history[1:]
+    
+    # 获取最近的对话记录，每轮包含user和assistant消息
+    if conversation_history:
+        # 计算最多需要保留的消息数量（max_turns * 2，因为每轮包含user和assistant）
+        max_messages = max_turns * 2
+        recent_history = conversation_history[-max_messages:] if len(conversation_history) > max_messages else conversation_history
+        result.extend(recent_history)
+    
+    return result
+
+
+def call_openai_api(client, openai_messages: List[Dict[str, str]], model: str = None, temperature: float = None, max_tokens: int = None) -> str:
+    """
+    直接调用OpenAI API
+    
+    Args:
+        client: OpenAI client实例
+        openai_messages: OpenAI格式的消息列表
+        model: 模型名称
+        temperature: 温度参数
+        max_tokens: 最大token数
+        
+    Returns:
+        LLM的响应内容
+    """
+    try:
+        # 从config获取默认参数
+        from config import config
+        model = model or config.MODEL_NAME
+        temperature = temperature if temperature is not None else config.TEMPERATURE
+        max_tokens = max_tokens or config.MAX_TOKENS
+        
+        response = client.chat.completions.create(
+            model=model,
+            messages=openai_messages,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        
+        return response.choices[0].message.content
+        
+    except Exception as e:
+        print(f"❌ OpenAI API调用失败: {e}")
+        raise e
 
 
 # =========================
@@ -70,7 +220,7 @@ class InterviewState(TypedDict):
     emergency_situation: bool
     summary: str
     needs_followup: bool
-    conversation_history: List[str]
+    conversation_history: List[Dict[str, str]]  # OpenAI格式: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
     chief_complaint: str  # 用户的主诉
     
     # 对话模式相关字段
@@ -141,18 +291,15 @@ class SCID5AgentCore:
                 - "structured": 固定流程模式，先完成问诊再转CBT闲聊
         """
         self.workflow_mode = workflow_mode
-        self.llm = self._initialize_llm()
+        self.openai_client = self._initialize_openai_client()
         self.workflow = None
         self.app = None
     
-    def _initialize_llm(self) -> ChatOpenAI:
-        """初始化语言模型"""
-        return ChatOpenAI(
+    def _initialize_openai_client(self):
+        """初始化OpenAI客户端"""
+        return openai.OpenAI(
             api_key=config.OPENAI_API_KEY,
-            base_url=config.OPENAI_API_BASE,
-            model=config.MODEL_NAME,
-            temperature=config.TEMPERATURE,
-            max_tokens=config.MAX_TOKENS
+            base_url=config.OPENAI_API_BASE
         )
 
 
@@ -182,10 +329,10 @@ class SCID5Agent(SCID5AgentCore):
         from workflow_builder import WorkflowBuilder
         
         # 初始化各个功能模块
-        self.conversation_handler = ConversationModeHandler(self.llm, workflow_mode)
-        self.interview_handler = InterviewFlowHandler(self.llm)
-        self.response_generator = ResponseGenerator(self.llm)
-        self.emergency_handler = EmergencyHandler(self.llm)
+        self.conversation_handler = ConversationModeHandler(self.openai_client, workflow_mode)
+        self.interview_handler = InterviewFlowHandler(self.openai_client)
+        self.response_generator = ResponseGenerator(self.openai_client)
+        self.emergency_handler = EmergencyHandler(self.openai_client)
         
         # 为响应生成器设置工作模式
         self.response_generator.workflow_mode = workflow_mode

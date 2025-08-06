@@ -154,8 +154,8 @@ class WorkflowBuilder:
 class EnhancedIntentDetector:
     """增强的意图检测器"""
     
-    def __init__(self, llm, workflow_mode: str = "adaptive"):
-        self.llm = llm
+    def __init__(self, openai_client, workflow_mode: str = "adaptive"):
+        self.openai_client = openai_client
         self.workflow_mode = workflow_mode
     
     def detect_conversation_mode(self, state: InterviewState) -> InterviewState:
@@ -391,12 +391,15 @@ class EnhancedIntentDetector:
         try:
             print("🧠 增强意图检测 - LLM分析中...")
             
-            detection_response = self.llm.invoke([
-                SystemMessage(content=PromptTemplates.INTENT_ANALYST_SYSTEM_PROMPT),
-                HumanMessage(content=detection_prompt)
-            ])
+            # 使用OpenAI API直接调用
+            from agent import call_openai_api
+            openai_messages = [
+                {"role": "system", "content": PromptTemplates.INTENT_ANALYST_SYSTEM_PROMPT},
+                {"role": "user", "content": detection_prompt}
+            ]
+            detection_response_content = call_openai_api(self.openai_client, openai_messages)
             
-            result = json.loads(detection_response.content)
+            result = json.loads(detection_response_content)
             print(f"✅ 检测结果：{result['primary_intent']} (置信度: {result['confidence']})")
             
             return result
@@ -507,12 +510,12 @@ class EnhancedIntentDetector:
 class ConversationModeHandler:
     """对话模式处理器 - 集成增强意图检测"""
     
-    def __init__(self, llm, workflow_mode: str = "adaptive"):
-        self.llm = llm
+    def __init__(self, openai_client, workflow_mode: str = "adaptive"):
+        self.openai_client = openai_client
         self.workflow_mode = workflow_mode
         
         # 初始化增强意图检测器
-        self.intent_detector = EnhancedIntentDetector(llm, workflow_mode)
+        self.intent_detector = EnhancedIntentDetector(openai_client, workflow_mode)
         
         # 保留原有的简单检测作为后备
         self.simple_detection_enabled = True
@@ -609,11 +612,24 @@ class ConversationModeHandler:
         
         latest_user_message = user_messages[-1].content
         
-        # 简单关键词检测
-        if any(keyword in latest_user_message for keyword in KeywordLibrary.CHAT_KEYWORDS):
+        # 简单关键词检测 - 与增强检测逻辑保持一致
+        # 明确问诊需求检测
+        if any(keyword in latest_user_message for keyword in KeywordLibrary.INTERVIEW_KEYWORDS):
+            mode = "interview"
+            will_lock = True
+        # 明确闲聊需求检测
+        elif any(keyword in latest_user_message for keyword in KeywordLibrary.CHAT_KEYWORDS):
             mode = "chat"
             will_lock = False
-        elif any(keyword in latest_user_message for keyword in KeywordLibrary.INTERVIEW_KEYWORDS):
+        # 前3轮对话：默认闲聊，除非明确要求问诊
+        elif current_turn < 3:
+            mode = "chat"
+            will_lock = False
+            print(f"🔄 简单检测：前3轮对话，默认进入CBT闲聊模式", flush=True)
+        # 3轮后：检测症状关键词
+        elif any(keyword in latest_user_message for keyword in 
+                 KeywordLibrary.SYMPTOM_KEYWORDS.get("medium_severity", []) + 
+                 KeywordLibrary.SYMPTOM_KEYWORDS.get("low_severity", [])):
             mode = "interview"
             will_lock = True
         else:
@@ -645,8 +661,67 @@ class ConversationModeHandler:
 class InterviewFlowHandler:
     """问诊流程处理器"""
     
-    def __init__(self, llm):
-        self.llm = llm
+    def __init__(self, openai_client):
+        self.openai_client = openai_client
+    
+    def _build_conversation_messages(self, state: dict, system_prompt: str, new_user_message: str = None) -> list:
+        """
+        构建正确格式的对话消息列表: system -> human -> assistant -> human -> assistant...
+        
+        Args:
+            state: 当前状态
+            system_prompt: 系统消息内容
+            new_user_message: 新的用户消息（可选）
+        
+        Returns:
+            格式正确的消息列表
+        """
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # 获取现有的对话消息（跳过系统消息）
+        existing_messages = state.get("messages", [])
+        
+        # 过滤出人类和AI消息，确保交替格式
+        conversation_messages = []
+        for msg in existing_messages:
+            if isinstance(msg, (HumanMessage, AIMessage)):
+                conversation_messages.append(msg)
+        
+        # 添加现有的对话消息
+        messages.extend(conversation_messages)
+        
+        # 如果有新的用户消息，添加到最后
+        if new_user_message:
+            messages.append(HumanMessage(content=new_user_message))
+        
+        # 调试输出
+        print(f"🔍 DEBUG - Workflow构建的消息序列:")
+        for i, msg in enumerate(messages):
+            msg_type = type(msg).__name__
+            content_preview = msg.content[:50] if hasattr(msg, 'content') else str(msg)[:50]
+            print(f"  [{i}] {msg_type}: {content_preview}...")
+        
+        return messages
+    
+    def _build_conversation_context(self, state: dict) -> str:
+        """构建对话上下文字符串"""
+        conversation_history = state.get("conversation_history", [])
+        if not conversation_history:
+            return "无对话历史"
+        
+        # 使用现有的格式化函数获取最近的对话
+        from agent import format_conversation_context
+        recent_history = format_conversation_context(conversation_history, max_turns=4)
+        
+        # 转换为字符串格式
+        context_lines = []
+        for msg in recent_history:
+            if msg["role"] == "user":
+                context_lines.append(f"User: {msg['content']}")
+            elif msg["role"] == "assistant":
+                context_lines.append(f"You: {msg['content']}")
+        
+        return "\n".join(context_lines) if context_lines else "无对话历史"
     
     def start_interview(self, state: InterviewState) -> InterviewState:
         """开始问诊 - 生成自我介绍和引导开场白"""
@@ -660,8 +735,11 @@ class InterviewFlowHandler:
             print(PromptTemplates.INITIAL_INTERVIEW_PROMPT)
             print("=" * 50)
             
-            response = self.llm.invoke([HumanMessage(content=PromptTemplates.INITIAL_INTERVIEW_PROMPT)])
-            initial_response = response.content.strip()
+            # 使用OpenAI API直接调用
+            from agent import call_openai_api
+            openai_messages = [{"role": "user", "content": PromptTemplates.INITIAL_INTERVIEW_PROMPT}]
+            response_content = call_openai_api(self.openai_client, openai_messages)
+            initial_response = response_content.strip()
             
             print("RESPONSE:")
             print(initial_response)
@@ -736,40 +814,54 @@ class InterviewFlowHandler:
         current_question_id = state["current_question_id"]
         current_question = scid5_kb.questions.get(current_question_id) if current_question_id else None
         
-        # 获取对话上下文
-        conversation_context = "\n".join(state["conversation_history"][-10:]) if state["conversation_history"] else ""
-        
-        # 构建综合分析和回应的提示
+        # 构建综合分析的系统消息
         next_question_info = self._get_next_question_info(current_question_id, last_user_message, state)
-        
         current_disorder_focus = state.get("current_question_id", "depression_screening")
         
-        # 获取上一轮AI的真实回复作为上下文
-        last_ai_response = ""
-        for msg in reversed(state.get("messages", [])):
+        # 获取最后一条AI回复
+        last_ai_response = None
+        for msg in reversed(state["messages"]):
             if isinstance(msg, AIMessage):
                 last_ai_response = msg.content
                 break
+        if not last_ai_response:
+            last_ai_response = "开始对话"
         
-        comprehensive_prompt = PromptTemplates.get_comprehensive_analysis_prompt(
-            conversation_context, last_ai_response, last_user_message, 
-            current_disorder_focus, next_question_info
+        # 构建对话上下文
+        conversation_context = self._build_conversation_context(state)
+        
+        # 使用prompts.py中的统一函数
+        system_prompt = PromptTemplates.get_comprehensive_analysis_prompt(
+            conversation_context=conversation_context,
+            last_ai_response=last_ai_response,
+            last_user_message=last_user_message,
+            current_disorder_focus=current_disorder_focus,
+            next_question_info=next_question_info
+        )
+        
+        # 构建正确格式的消息列表
+        current_messages = self._build_conversation_messages(
+            state, 
+            system_prompt, 
+            last_user_message
         )
         
         print("=" * 50)
         print("🔍 DEBUG - UNDERSTAND_AND_RESPOND (COMPREHENSIVE) LLM CALL", flush=True)
-        print("PROMPT:")
-        print(comprehensive_prompt)
+        print(f"🔍 DEBUG - Messages数量: {len(current_messages)}", flush=True)
         print("=" * 50)
         
-        response = self.llm.invoke([HumanMessage(content=comprehensive_prompt)])
+        # 转换为OpenAI格式并调用API
+        from agent import call_openai_api, messages_to_openai_format
+        openai_messages = messages_to_openai_format(current_messages)
+        response_content = call_openai_api(self.openai_client, openai_messages)
         
         print("RESPONSE:")
-        print(response.content)
+        print(response_content)
         print("=" * 50)
         
         try:
-            analysis = json.loads(response.content)
+            analysis = json.loads(response_content)
         except:
             # 如果JSON解析失败，提供默认回应
             analysis = {
@@ -794,18 +886,23 @@ class InterviewFlowHandler:
         # 生成回应消息
         ai_response = AIMessage(content=analysis["comprehensive_response"])
         
-        # 更新对话历史 - 使用真实的AI回复内容
-        updated_history = state["conversation_history"].copy()
-        # 如果是第一轮对话，添加上一轮的AI回复（如果存在）
+        # 导入工具函数
+        from agent import update_conversation_history_openai
+        
+        # 更新对话历史 - 使用OpenAI格式和真实的AI回复内容
+        last_ai_message = None
         if len(state["messages"]) > 1:
-            last_ai_message = None
             for msg in reversed(state["messages"]):
                 if isinstance(msg, AIMessage):
                     last_ai_message = msg.content
                     break
-            if last_ai_message:
-                updated_history.append(f"You: {last_ai_message}")
-        updated_history.append(f"User: {last_user_message}")
+        
+        # 使用新的工具函数更新对话历史
+        updated_history = update_conversation_history_openai(
+            state, 
+            ai_message=last_ai_message, 
+            user_message=last_user_message
+        )
         # 注意：不在这里添加当前AI回复，因为它会在下一轮的历史中显示
         
         # 更新当前问题ID
@@ -1118,8 +1215,8 @@ class InterviewFlowHandler:
 class EmergencyHandler:
     """紧急情况处理器"""
     
-    def __init__(self, llm):
-        self.llm = llm
+    def __init__(self, openai_client):
+        self.openai_client = openai_client
     
     def check_emergency(self, state: InterviewState) -> InterviewState:
         """检查紧急情况"""
@@ -1141,14 +1238,17 @@ class EmergencyHandler:
         print(risk_prompt)
         print("=" * 50)
         
-        response = self.llm.invoke([HumanMessage(content=risk_prompt)])
+        # 使用OpenAI API直接调用
+        from agent import call_openai_api
+        openai_messages = [{"role": "user", "content": risk_prompt}]
+        response_content = call_openai_api(self.openai_client, openai_messages)
         
         print("RESPONSE:")
-        print(response.content)
+        print(response_content)
         print("=" * 50)
         
         try:
-            risk_analysis = json.loads(response.content)
+            risk_analysis = json.loads(response_content)
             emergency_detected = risk_analysis.get("immediate_action_needed", False)
         except:
             # 如果LLM分析失败，使用关键词检测作为备选
@@ -1177,8 +1277,8 @@ class EmergencyHandler:
 class ResponseGenerator:
     """回应生成器"""
     
-    def __init__(self, llm):
-        self.llm = llm
+    def __init__(self, openai_client):
+        self.openai_client = openai_client
         self.workflow_mode = "adaptive"  # 默认模式
     
     def generate_summary(self, state: InterviewState) -> InterviewState:
@@ -1198,13 +1298,16 @@ class ResponseGenerator:
         print(prompt)
         print("=" * 50)
         
-        response = self.llm.invoke([HumanMessage(content=prompt)])
+        # 使用OpenAI API直接调用
+        from agent import call_openai_api
+        openai_messages = [{"role": "user", "content": prompt}]
+        response_content = call_openai_api(self.openai_client, openai_messages)
         
         print("RESPONSE:")
-        print(response.content)
+        print(response_content)
         print("=" * 50)
         
-        detailed_summary = response.content
+        detailed_summary = response_content
         
         # 根据工作模式添加不同的结束语
         if self.workflow_mode == "structured":
@@ -1229,12 +1332,15 @@ class ResponseGenerator:
                 current_state.get("current_question_id", "")
             )
             
-            response = self.llm.invoke([
-                SystemMessage(content=system_content),
-                HumanMessage(content=fallback_prompt)
-            ])
+            # 使用OpenAI API直接调用
+            from agent import call_openai_api
+            openai_messages = [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": fallback_prompt}
+            ]
+            response_content = call_openai_api(self.openai_client, openai_messages)
             
-            return response.content, current_state
+            return response_content, current_state
             
         except Exception as e:
             print(f"Fallback response error: {e}")

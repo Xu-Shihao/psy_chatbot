@@ -8,17 +8,19 @@ from langchain.schema import HumanMessage, SystemMessage, AIMessage
 
 from agent import InterviewState
 from workflow import EnhancedIntentDetector
+from prompts import PromptTemplates
+
 
 
 class ConversationModeHandler:
     """对话模式处理器 - 集成增强意图检测"""
     
-    def __init__(self, llm, workflow_mode: str = "adaptive"):
-        self.llm = llm
+    def __init__(self, openai_client, workflow_mode: str = "adaptive"):
+        self.openai_client = openai_client
         self.workflow_mode = workflow_mode
         
         # 初始化增强意图检测器
-        self.intent_detector = EnhancedIntentDetector(llm, workflow_mode)
+        self.intent_detector = EnhancedIntentDetector(openai_client, workflow_mode)
         
         # 保留原有的简单检测作为后备
         self.simple_detection_enabled = True
@@ -115,14 +117,26 @@ class ConversationModeHandler:
         
         latest_user_message = user_messages[-1].content
         
-        # 简单关键词检测
-        chat_keywords = ["闲聊", "聊天", "谈心", "聊聊", "随便聊", "陪我聊"]
-        interview_keywords = ["抑郁", "焦虑", "失眠", "情绪", "心理", "症状", "困扰", "问题"]
+        # 简单关键词检测 - 使用统一的关键词库
+        from prompts import KeywordLibrary
         
-        if any(keyword in latest_user_message for keyword in chat_keywords):
+        # 明确问诊需求检测
+        if any(keyword in latest_user_message for keyword in KeywordLibrary.INTERVIEW_KEYWORDS):
+            mode = "interview"
+            will_lock = True
+        # 明确闲聊需求检测
+        elif any(keyword in latest_user_message for keyword in KeywordLibrary.CHAT_KEYWORDS):
             mode = "chat"
             will_lock = False
-        elif any(keyword in latest_user_message for keyword in interview_keywords):
+        # 前3轮对话：默认闲聊，除非明确要求问诊
+        elif current_turn < 3:
+            mode = "chat"
+            will_lock = False
+            print(f"🔄 简单检测：前3轮对话，默认进入CBT闲聊模式", flush=True)
+        # 3轮后：检测症状关键词
+        elif any(keyword in latest_user_message for keyword in 
+                 KeywordLibrary.SYMPTOM_KEYWORDS.get("medium_severity", []) + 
+                 KeywordLibrary.SYMPTOM_KEYWORDS.get("low_severity", [])):
             mode = "interview"
             will_lock = True
         else:
@@ -150,69 +164,64 @@ class ConversationModeHandler:
         user_messages = [msg for msg in state["messages"] if isinstance(msg, HumanMessage)]
         latest_user_message = user_messages[-1].content if user_messages else ""
         
-        # 更新对话历史 - 添加上一轮AI回复和当前用户消息（类似 fallback_response）
-        updated_history = state.get("conversation_history", []).copy()
+        # 导入工具函数
+        from agent import update_conversation_history_openai, format_conversation_context
         
-        # 添加上一轮的AI回复（如果存在且不是初始介绍）
+        # 更新对话历史 - 使用OpenAI格式
         messages = state.get("messages", [])
         
         print(f"🔍 DEBUG - CBT Messages数量: {len(messages)}", flush=True)
         for i, msg in enumerate(messages):
             print(f"🔍 DEBUG - CBT Message[{i}]: {type(msg).__name__}", flush=True)
         
-        # 只有当有真正的对话历史时，才添加AI回复
+        # 获取上一轮的AI回复（如果存在且不是初始介绍）
+        last_ai_message = None
         if len(messages) > 3:  # SystemMessage + AIMessage(intro) + HumanMessage + AIMessage(real_response)
-            last_ai_message = None
             # 从后往前找，跳过可能的初始介绍
             for msg in reversed(messages[2:]):  # 跳过前两个消息（SystemMessage + 初始介绍）
                 if isinstance(msg, AIMessage):
                     last_ai_message = msg.content.strip()
                     break
-            if last_ai_message:
-                updated_history.append(f"You: {last_ai_message}")
-                print(f"🔍 DEBUG - CBT添加AI历史: {last_ai_message[:50]}...", flush=True)
+
+        # 如果是评估完成后的闲聊, 更新system prompt
+        if state.get("conversation_mode") == "assessment_complete":
+            system_prompt = PromptTemplates.CBT_ASSESSMENT_COMPLETE_ADDON
+        else:
+            system_prompt = PromptTemplates.CBT_THERAPIST_SYSTEM_PROMPT
+            
+        # 使用新的工具函数更新对话历史
+        updated_history = update_conversation_history_openai(
+            state, 
+            ai_message=last_ai_message, 
+            user_message=latest_user_message,
+            system_prompt=system_prompt
+        )
         
-        # 添加当前用户消息
-        updated_history.append(f"User: {latest_user_message}")
+        if last_ai_message:
+            print(f"🔍 DEBUG - CBT添加AI历史: {last_ai_message[:50]}...", flush=True)
         print(f"🔍 DEBUG - CBT添加用户消息: {latest_user_message}", flush=True)
         
         # 获取最近20轮的历史记录用于prompt
-        recent_history = updated_history[-20:] if len(updated_history) > 0 else []
-        history_context = "\n".join(recent_history) if recent_history else "无对话历史"
-        
-        # 使用统一的prompt模板
-        from prompts import PromptTemplates
-        cbt_system_prompt = PromptTemplates.CBT_THERAPIST_SYSTEM_PROMPT
-        
-        # 如果是评估完成后的闲聊
-        if state.get("conversation_mode") == "assessment_complete":
-            cbt_system_prompt += PromptTemplates.CBT_ASSESSMENT_COMPLETE_ADDON
+        openai_messages = format_conversation_context(updated_history, max_turns=10)
         
         try:
-            # 生成包含历史对话的CBT疗愈师回复
-            cbt_prompt = f"""## 最近对话历史：
-{history_context}
-
-请基于对话历史，生成合适的CBT疗愈师回应。"""
             
+            # 使用OpenAI API直接调用
+            from agent import call_openai_api
+            openai_messages.append({"role": "user", "content": latest_user_message})
+
             print("=" * 50)
             print("🔍 DEBUG - CBT_THERAPIST_RESPONSE LLM CALL", flush=True)
-            print("SYSTEM PROMPT:")
-            print(cbt_system_prompt)
-            print("USER PROMPT:")
-            print(cbt_prompt)
+            print(openai_messages)
             print("=" * 50)
             
-            cbt_response = self.llm.invoke([
-                SystemMessage(content=cbt_system_prompt),
-                HumanMessage(content=cbt_prompt)
-            ])
+            cbt_response_content = call_openai_api(self.openai_client, openai_messages)
             
             print("RESPONSE:")
-            print(cbt_response.content)
+            print(cbt_response_content)
             print("=" * 50)
             
-            final_response = cbt_response.content
+            final_response = cbt_response_content
             
             # 如果是评估完成状态，添加感谢和确认信息
             if state.get("conversation_mode") == "assessment_complete" and "感谢" not in final_response:

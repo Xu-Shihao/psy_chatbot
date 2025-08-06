@@ -59,7 +59,7 @@ class InterviewState(TypedDict):
     emergency_situation: bool
     summary: str
     needs_followup: bool
-    conversation_history: List[str]
+    conversation_history: List[Dict[str, str]]  # OpenAI格式: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}, ...]
     chief_complaint: str  # 用户的主诉
     
     # 对话模式相关字段
