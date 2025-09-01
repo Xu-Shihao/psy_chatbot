@@ -96,6 +96,16 @@ st.markdown("""
     .disclaimer li {
         color: #000000;
     }
+    
+    .cbt-mode-indicator {
+        background: linear-gradient(90deg, #e8f5e8 0%, #f0f8ff 100%);
+        border: 1px solid #4caf50;
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin: 0.5rem 0;
+        color: #2e7d32;
+        font-weight: 500;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,6 +122,9 @@ def initialize_session_state():
     
     if "assessment_complete" not in st.session_state:
         st.session_state.assessment_complete = False
+    
+    if "cbt_chat_started" not in st.session_state:
+        st.session_state.cbt_chat_started = False
     
     if "workflow_mode" not in st.session_state:
         st.session_state.workflow_mode = "adaptive"
@@ -440,6 +453,7 @@ def display_sidebar():
             debug_info = {
                 "interview_started": st.session_state.get("interview_started", False),
                 "assessment_complete": st.session_state.get("assessment_complete", False),
+                "cbt_chat_started": st.session_state.get("cbt_chat_started", False),
                 "messages_count": len(st.session_state.get("messages", [])),
                 "debug_mode": config.DEBUG
             }
@@ -615,32 +629,71 @@ def main():
     
     # 评估完成后的CBT疗愈模式
     else:
-        st.success("✅ 评估已完成！现在进入CBT疗愈模式，我会陪伴您进行心理疏导。")
+        # 如果还没有开始CBT对话，显示完整的评估完成界面
+        if not st.session_state.cbt_chat_started:
+            st.success("✅ 评估已完成！现在进入CBT疗愈模式，我会陪伴您进行心理疏导。")
+            
+            # 提供下载报告的选项
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📊 下载完整报告"):
+                    report = generate_assessment_report()
+                    st.download_button(
+                        label="点击下载",
+                        data=report,
+                        file_name=f"assessment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain"
+                    )
+            
+            with col2:
+                if st.button("🔄 开始新的评估"):
+                    # 保存当前选择的workflow_mode
+                    current_mode = st.session_state.get("workflow_mode", "adaptive")
+                    st.session_state.clear()
+                    st.session_state.workflow_mode = current_mode
+                    initialize_session_state()
+                    st.rerun()
+            
+            st.markdown("---")
+            st.markdown("💬 **继续对话** - 我会为您提供心理支持和疏导")
+        else:
+            # 如果已经开始CBT对话，显示简洁的状态和快捷操作
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                st.markdown("""
+                <div class="cbt-mode-indicator">
+                    💬 CBT疗愈对话进行中...
+                </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                # 紧凑的下载报告按钮
+                if st.button("📄 报告", key="download_report_compact", help="下载评估报告"):
+                    report = generate_assessment_report()
+                    st.download_button(
+                        label="📥 下载",
+                        data=report,
+                        file_name=f"assessment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        mime="text/plain",
+                        key="download_report_compact_btn"
+                    )
+            with col3:
+                # 重新开始按钮
+                if st.button("🔄 重新开始", key="restart_compact", help="开始新的评估"):
+                    # 保存当前选择的workflow_mode
+                    current_mode = st.session_state.get("workflow_mode", "adaptive")
+                    st.session_state.clear()
+                    st.session_state.workflow_mode = current_mode
+                    initialize_session_state()
+                    st.rerun()
         
-        # 提供下载报告的选项
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📊 下载完整报告"):
-                report = generate_assessment_report()
-                st.download_button(
-                    label="点击下载",
-                    data=report,
-                    file_name=f"assessment_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain"
-                )
-        
-        with col2:
-            if st.button("🔄 开始新的评估"):
-                st.session_state.clear()
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # 继续CBT疗愈对话
-        st.markdown("💬 **继续对话** - 我会为您提供心理支持和疏导")
+        # CBT疗愈对话输入框
         user_input = st.chat_input("请告诉我您想聊的话题，或者询问关于心理健康的问题...")
         
         if user_input:
+            # 标记CBT对话已开始
+            if not st.session_state.cbt_chat_started:
+                st.session_state.cbt_chat_started = True
+            
             # 处理用户输入，但现在是CBT疗愈模式
             with st.spinner("CBT疗愈师正在回应..."):
                 process_user_input(user_input)
