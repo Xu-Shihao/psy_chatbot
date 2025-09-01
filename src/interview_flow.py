@@ -276,8 +276,8 @@ class InterviewFlowHandler:
             response_lower = user_response.lower()
             print(f"   用户回答(小写): {response_lower}")
             
-            depression_keywords = ["抑郁", "郁闷", "低落", "沮丧", "悲伤", "难过"]
-            anxiety_keywords = ["焦虑", "紧张", "担心", "恐慌", "害怕"]
+            depression_keywords = ["诊断抑郁", "有没有抑郁", "是否抑郁", "有无抑郁", "抑郁症状"]
+            anxiety_keywords = ["诊断焦虑", "有没有焦虑", "是否焦虑", "有无焦虑", "焦虑症状"]
             
             depression_found = [kw for kw in depression_keywords if kw in response_lower]
             anxiety_found = [kw for kw in anxiety_keywords if kw in response_lower]

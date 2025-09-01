@@ -220,8 +220,8 @@ class EnhancedIntentDetector:
         symptom_severity = context["symptom_severity"]
         user_engagement = context["user_engagement"]
         
-        # 检查是否已锁定问诊模式
-        if state.get("interview_mode_locked", False):
+        # 检查是否已锁定问诊模式（前3轮除外）
+        if state.get("interview_mode_locked", False) and current_turn >= 3:
             return {
                 **state,
                 "conversation_mode": "continue_interview",
@@ -330,8 +330,22 @@ class EnhancedIntentDetector:
             chat_active = True
             should_lock = False
             
-        # 对于低置信度的判断，默认切换到CBT闲聊模式
-        if confidence < 0.6 and current_turn < 3:
+        # 前3轮对话：只有明确的问诊意图才进入问诊模式，其他情况都进入CBT闲聊模式
+        if current_turn < 3:
+            # 只有明确的高置信度问诊意图才切换到问诊模式
+            if primary_intent in ["interview", "continue_interview"] and confidence > 0.8:
+                final_mode = primary_intent
+                chat_active = False
+                should_lock = True
+                print(f"🔒 前3轮检测到明确问诊意图（置信度: {confidence:.2f}），切换到问诊模式", flush=True)
+            else:
+                # 前3轮无论检测到什么意图（包括supportive_chat），都进入CBT闲聊模式
+                final_mode = "chat"
+                chat_active = True
+                should_lock = False
+                print(f"🔄 前3轮对话，强制进入CBT闲聊模式（检测到: {primary_intent}，置信度: {confidence:.2f}）", flush=True)
+        # 3轮后：对于低置信度的判断，仍然默认切换到CBT闲聊模式
+        elif confidence < 0.6:
             final_mode = "chat"  # 没有明确问诊意图时，默认进入CBT闲聊模式
             chat_active = True
             should_lock = False

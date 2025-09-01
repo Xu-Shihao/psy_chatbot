@@ -268,10 +268,48 @@ User: {last_user_message}
     def get_assessment_summary_prompt(conversation_history: list, user_responses: dict, 
                                     assessment_summary: str) -> str:
         """生成评估总结prompt"""
+        # 处理conversation_history格式 - 可能是LangChain消息对象、OpenAI格式或旧的字符串格式
+        formatted_history = ""
+        if conversation_history and len(conversation_history) > 0:
+            formatted_lines = []
+            for msg in conversation_history:
+                if hasattr(msg, 'content'):
+                    # LangChain消息对象格式 (SystemMessage, HumanMessage, AIMessage)
+                    from langchain.schema import SystemMessage, HumanMessage, AIMessage
+                    if isinstance(msg, HumanMessage):
+                        formatted_lines.append(f"User: {msg.content}")
+                    elif isinstance(msg, AIMessage):
+                        formatted_lines.append(f"You: {msg.content}")
+                    elif isinstance(msg, SystemMessage):
+                        formatted_lines.append(f"System: {msg.content}")
+                elif isinstance(msg, dict):
+                    # OpenAI格式
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        formatted_lines.append(f"User: {content}")
+                    elif role == "assistant":
+                        formatted_lines.append(f"You: {content}")
+                    elif role == "system":
+                        formatted_lines.append(f"System: {content}")
+                elif isinstance(msg, str):
+                    # 字符串格式
+                    formatted_lines.append(msg)
+            
+            if formatted_lines:
+                formatted_history = "\n".join(formatted_lines)
+            else:
+                # 如果无法解析，尝试直接转换为字符串
+                try:
+                    formatted_history = "\n".join([str(msg) for msg in conversation_history])
+                except:
+                    formatted_history = "无法解析对话历史"
+        else:
+            formatted_history = "无对话历史"
         return f"""基于以下完整的心理健康筛查对话，生成一份专业、个性化的评估总结：
 
 对话历史：
-{chr(10).join(conversation_history)}
+{formatted_history}
 
 用户回答记录：
 {user_responses}

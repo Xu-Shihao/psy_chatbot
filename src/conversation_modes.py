@@ -122,7 +122,15 @@ class ConversationModeHandler:
         if any(keyword in latest_user_message for keyword in chat_keywords):
             mode = "chat"
             will_lock = False
-        elif any(keyword in latest_user_message for keyword in interview_keywords):
+        # 前3轮对话：默认闲聊，除非明确要求问诊
+        elif current_turn < 3:
+            mode = "chat"
+            will_lock = False
+            print(f"🔄 简单检测：前3轮对话，强制进入CBT闲聊模式", flush=True)
+        # 3轮后：检测症状关键词
+        elif any(keyword in latest_user_message for keyword in 
+                 KeywordLibrary.SYMPTOM_KEYWORDS.get("medium_severity", []) + 
+                 KeywordLibrary.SYMPTOM_KEYWORDS.get("low_severity", [])):
             mode = "interview"
             will_lock = True
         else:
